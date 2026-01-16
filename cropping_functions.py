@@ -5,7 +5,12 @@ import matplotlib.pyplot as plt
 import os
 import PIL
 from scipy.ndimage import binary_closing
+from config import *
 
+# instructiosn to import from parent directory
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from plotting.plot_crops import plot_crops_quicklooks_2fields, plot_single_crops_images
 
 def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_path, file_type = 'nc'):
     """
@@ -68,7 +73,7 @@ def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_pat
 
 
 
-def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, file_type = 'nc'):
+def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, timestamp, domain, file_type = 'nc'):
     """
     Generates multiple random crops from the input dataset, saves them in NetCDF and TIFF formats.
 
@@ -88,15 +93,27 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, fi
         The base filename for saving the cropped images.
     :param out_path: str
         The output directory where the cropped images will be saved.
-    
+    :param timestamp: str
+        The timestamp associated with the dataset.
+    :param domain: tuple
+        The domain for cropping (lon_min, lon_max, lat_min, lat_max).
+    :param file_type: str, optional (default='nc')
+        The format in which the cropped images will be saved ('nc' for NetCDF, 'npy' for NumPy array).
     :return: None
+
+
     """
+
 
     #get array size from dataset ds_image 
     x = len(ds_image.lon.values)
     y = len(ds_image.lat.values)
     #print(x,y)
-       
+    
+    if QUICKLOOKS_CROPS:
+        crop_positions = []
+
+    # loop over the number of samples to generate random crops
     for i in range(n_sample):
 
         x1 = randrange(0, x - x_pixel)
@@ -110,6 +127,10 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, fi
         lonmax = ds_image.lon.values[x1+x_pixel-1]
         #print([lonmin, lonmax, latmin, latmax])
 
+        # store in a list the latmax/latmin e lonmax/lonmin for each crop for plotting quicklooks later
+        if QUICKLOOKS_CROPS:
+            crop_positions.append([lonmin, lonmax, latmin, latmax])
+            
         #crop the dataset besed on the random x and y (the upper left point of the crop)
         ds_crop = filter_by_domain(ds_image,[lonmin, lonmax, latmin, latmax])
 
@@ -142,6 +163,19 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, fi
 
         #close the dataset to free resources
         ds_crop.close()
+
+    # generate quicklooks of the random crops positions overimposed on the two fields
+    if QUICKLOOKS_CROPS:
+
+        print("Generating quicklooks for random crops...")
+        # first plot: quicklooks of the two fields overimposed with the random crops positions
+        plot_crops_quicklooks_2fields(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_positions)
+
+        # second plot: plot each variabile separately for each crop position
+        plot_single_crops_images(timestamp, out_path, filename)
+
+    return
+
 
 
 def filter_by_domain(ds, domain):
@@ -414,6 +448,7 @@ def apply_cma_mask(ds_day, ds_day_var, value_max, only_108=True):
     """
     Applies binary closing to each time slice of the 'cma' field in ds_day,
     and updates 'ir_108' in ds_day_var accordingly at each timestamp.
+    Where cloud mask is zero after closing, the value that is inserted is value_max.
 
     Parameters:
     - ds_day: xarray Dataset with dimensions (T, lat, lon) containing 'cma'.
@@ -434,6 +469,8 @@ def apply_cma_mask(ds_day, ds_day_var, value_max, only_108=True):
         if only_108:
             # Only apply mask to 'IR_108'
             ir_108_slice = ds_day_var['IR_108'].sel(time=t)
+            print(value_max[0])
+
             masked_ir_108 = ir_108_slice.where(closed_cma == 1, value_max[0])
             ds_day_var['IR_108'].loc[dict(time=t)] = masked_ir_108
         else:
