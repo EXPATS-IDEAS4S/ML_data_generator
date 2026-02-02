@@ -31,9 +31,9 @@ HOUR_START, HOUR_END = '00', '24'
 
 
 # variables to be processed and related input paths
-CLOUD_PRM = ['IR_108', 'cma', 'RR'] #list of variable fields to use (sat channels, radar or other variables from different sources)
-VALUE_MIN = [240., 0, 0.0]  # min value for each variable to consider as cloud-free when applying CMA mask
-VALUE_MAX = [290., 1, 20.0] # max value for each variable to consider as cloud-free when applying CMA mask
-PATH_DIR = ["/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", "/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", ""]
-BASENAME = ["merged_MSG_CMSAF", "merged_MSG_CMSAF","_RR_15min_msg_res"] # name string for the output files of the crops
-BUCKET_NAMES = ["expats-msg-training", "expats-msg-training", "expats-radar-germany"] # S3 bucket names for each variable
+CLOUD_PRM = ['IR_108', 'cma', 'RR_de', "RR_it"] #list of variable fields to use (sat channels, radar or other variables from different sources)
+VALUE_MIN = [240., 0, 0.0, 0.0]  # min value for each variable to consider as cloud-free when applying CMA mask
+VALUE_MAX = [290., 1, 20.0, 20.] # max value for each variable to consider as cloud-free when applying CMA mask
+PATH_DIR = ["/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", "/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", "", "/home/vpoli@ARPA.EMR.NET/dati_claudia/composito/"]
+BASENAME = ["merged_MSG_CMSAF", "merged_MSG_CMSAF","_RR_DE_15min_msg_res", ""] # name string for the output files of the crops
+BUCKET_NAMES = ["expats-msg-training", "expats-msg-training", "expat s-radar-germany", "arpae-radar-composite"] # S3 bucket names for each variable

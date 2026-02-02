@@ -61,9 +61,11 @@ def read_bucket_name_path(year, month, day):
         if var == 'IR_108' or var == 'HRV' or var == 'WV_062' or var == 'WV_073' or var == 'WV_087' or var == 'CMA':
             file_path = f"{PATH_DIR[i]}/{year:04d}/{month:02d}/{BASENAME[i]}_{year:04d}-{month:02d}-{day:02d}.nc"
 
-        elif var == 'RR':
+        elif var == 'RR_de':
             file_path = f"{year:04d}{month:02d}{day:02d}{BASENAME[i]}.nc.gz"
 
+        elif var == 'RR_it':
+            file_path = f"{PATH_DIR[i]}/COMP_{year:04d}{month:02d}{day:02d}{BASENAME[i]}.nc.gz"
         bucket_names.append(bucket_name)
         file_names.append(file_path)
 
@@ -249,9 +251,16 @@ def prepare_joint_dataset(s3, bucket_names, file_names):
         # read file object from S3 bucket
         file_obj = read_file(s3, file_names[i_var], bucket_names[i_var])
 
+        if var_name == 'RR_it':
+            # print files in the bucket
+            all_files = print_list_files_in_bucket(s3, bucket_names[i_var])
+            # if file not found, skip
+            pdb.set_trace()
+
+
         if file_obj is None:
             continue
-        if var_name == 'RR':
+        if var_name == 'RR_de' or var_name == 'RR_it':
             # decompress gzip file
             ds = xr.open_dataset(io.BytesIO(gzip.decompress(file_obj)))
         else:
