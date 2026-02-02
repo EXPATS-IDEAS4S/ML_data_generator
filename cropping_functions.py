@@ -11,6 +11,8 @@ from config import *
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from plotting.plot_crops import plot_crops_quicklooks_2fields, plot_single_crops_images
+from plotting.create_gif import create_gif_from_images
+
 
 def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_path, file_type = 'nc'):
     """
@@ -144,6 +146,7 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, ti
             #print(filepath)
 
             if file_type == 'nc':
+
                 encoding = {
                                 var: {
                                     'zlib': True,
@@ -165,15 +168,47 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, ti
         ds_crop.close()
 
     # generate quicklooks of the random crops positions overimposed on the two fields
-    if QUICKLOOKS_CROPS:
+    if QUICKLOOKS_CROPS and TIME_LENGTH == 1:
 
         print("Generating quicklooks for random crops...")
+
         # first plot: quicklooks of the two fields overimposed with the random crops positions
         plot_crops_quicklooks_2fields(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_positions)
 
         # second plot: plot each variabile separately for each crop position
         plot_single_crops_images(timestamp, out_path, filename)
+    
+    elif QUICKLOOKS_CROPS and TIME_LENGTH > 1:
 
+        print("Quicklooks for space-time crops.")   
+        # create gif with all time steps
+        quicklook_dir = out_path[:-3] + '/img/quicklooks/'
+
+        # create quicklook dir if it does not exist
+        if not os.path.exists(quicklook_dir):
+            os.makedirs(quicklook_dir)
+        
+        for i_time in range(len(ds_image.time)):
+
+            
+            timestamp = np.datetime_as_string(ds_image.time.values[i_time], unit='m')
+            if i_time == 0:
+                # read yy mm dd hh mm from the timestamp
+                yyyy = timestamp[0:4]
+                month = timestamp[5:7]
+                day = timestamp[8:10]
+                hour = timestamp[11:13]
+                minute = timestamp[14:16]
+                # create filename to save
+                filename_time = f"{yyyy}{month}{day}{hour}{minute}"
+
+            ds_image_time = ds_image.isel(time=i_time)
+
+            # first plot: quicklooks of the two fields overimposed with the random crops positions
+            plot_crops_quicklooks_2fields(ds_image_time, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_positions)
+
+        # create gif from the quicklooks images
+        create_gif_from_images(quicklook_dir, f"{quicklook_dir}/{filename_time}_quicklooks.gif", duration=500)
     return
 
 

@@ -36,7 +36,5 @@ def create_gif_from_images(folder_path, output_gif_path, duration=500):
         print("No images found in the specified folder.")
 
 # Example usage:
-folder_path = '/data1/crops/npy_crops_test/png'
-output_gif_path = '/data1/crops/npy_crops_test/png/IR_108_07-07-2014_expats.gif'
-
-create_gif_from_images(folder_path, output_gif_path, duration=500)
+#older_path = '/data1/crops/npy_crops_test/png'
+#output_gif_path = '/data1/crops/npy_crops_test/png/IR_108_07-07-2014_expats.gif'
