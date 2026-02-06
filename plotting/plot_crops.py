@@ -25,7 +25,7 @@ def read_orography():
     return ds
 
 
-def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_positions):
+def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_position):
     """
     Generates and saves quicklook images for the given crop dataset.
     This function creates quicklook images for the provided crop dataset and saves them
@@ -44,8 +44,8 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
         The timestamp associated with the dataset, used for naming the output files.    
     :param domain: tuple
         The domain for the input file (lon_min, lon_max, lat_min, lat_max).
-    :param crop_positions: list of tuples
-        List of tuples, where each tuple contains the (lon_min, lon_max, lat_min, lat_max) of each crop.
+    :param crop_position: tuple
+        tuple containing (lon_min, lon_max, lat_min, lat_max) of each crop.
     :return: None
     """
 
@@ -53,7 +53,6 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
     ds_orog = read_orography()
     ds_orog_crop = ds_orog.sel(lat=ds_crop.lat, lon=ds_crop.lon, method='nearest')
 
-    
 
     # set all fontsize of the plot to 20
     plt.rcParams.update({'font.size': 18})
@@ -63,14 +62,19 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
     hour, month, day, yyyy, minute = parse_timestamp(timestamp)
 
     # create output directory for quicklooks if it does not exist
-    quicklook_dir = out_path[:-3] + '/img/quicklooks/'
+    quicklook_dir = out_path + '/img/quicklooks/'
     if not os.path.exists(quicklook_dir):
         os.makedirs(quicklook_dir)
     
     logging.info(f"created path for quicklooks: {quicklook_dir}")
 
     # Extract variables
-    data = ds_crop.sel(time=timestamp)  # Select first (only) time index
+    if ds_crop.dims.get('time') is not None:
+
+        data = ds_crop.sel(time=timestamp)  # Select first (only) time index
+    else:
+        data = ds_crop
+
     lons, lats = data.lon, data.lat
     
     # plot 4 subplots with: 
@@ -139,9 +143,13 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
     colors = np.vstack(([1, 1, 1, 1], viridis))  # RGBA for white
 
     custom_cmap = ListedColormap(colors)
+    if CLOUD_PRM[2] == 'RR_de' or CLOUD_PRM[2] == 'RR_it':
+        par_plot = 'RR'
+    else:
+        par_plot = CLOUD_PRM[2]
     c3 = ax3.pcolormesh(lons, 
                         lats, 
-                        data[CLOUD_PRM[2]], 
+                        data[par_plot], 
                         cmap=custom_cmap, 
                         vmin=0.,
                         vmax=40.,

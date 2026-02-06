@@ -6,7 +6,8 @@ import os
 import PIL
 from scipy.ndimage import binary_closing
 from config import *
-
+import pdb
+import logging
 # instructiosn to import from parent directory
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -75,7 +76,7 @@ def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_pat
 
 
 
-def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, timestamp, domain, file_type = 'nc'):
+def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, domain, file_type = 'nc'):
     """
     Generates multiple random crops from the input dataset, saves them in NetCDF and TIFF formats.
 
@@ -89,8 +90,6 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, ti
         The width of the crop in pixels.
     :param y_pixel: int
         The height of the crop in pixels.
-    :param n_sample: int
-        The number of random crops to generate.
     :param filename: str
         The base filename for saving the cropped images.
     :param out_path: str
@@ -103,20 +102,26 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, ti
         The format in which the cropped images will be saved ('nc' for NetCDF, 'npy' for NumPy array).
     :return: None
 
+    global variables used and recalled from config.py:
+    - N_SAMPLES: int, number of random crops to generate per timestamp
+    - QUICKLOOKS_CROPS: bool, if true, quicklooks of the generated crops will be created and saved in the img folder
+
 
     """
-
+    # initialize ds_crop for both spatial series where to copy ds_crops once extracted
+    ds_crop_timeseries = []
 
     #get array size from dataset ds_image 
     x = len(ds_image.lon.values)
     y = len(ds_image.lat.values)
     #print(x,y)
     
+    # store crop coordinates for plotting quicklooks later
     if QUICKLOOKS_CROPS:
         crop_positions = []
 
-    # loop over the number of samples to generate random crops
-    for i in range(n_sample):
+    # loop over the number of samples in space to generate random crops
+    for i in range(N_SAMPLES):
 
         x1 = randrange(0, x - x_pixel)
         y1 = randrange(0, y - y_pixel)
@@ -141,20 +146,29 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, ti
         #if not ds_crop.to_array().isnull().any().item():
 
         if isnan_ds==False:
+            
+            # store ds crop in a list of crops for the space-time series
+            ds_crop_timeseries.append(ds_crop)
+
             #save the crops in nc format to keep actual values and lat/lon coordinates
-            filepath = out_path+'/'+filename+"_"+str(i)+'.'+file_type
+            filepath = out_path+'/'+str(filename)+"_"+str(i)+'.'+file_type
             #print(filepath)
 
             if file_type == 'nc':
-
                 encoding = {
-                                var: {
-                                    'zlib': True,
-                                    'complevel': 9,
-                                    'dtype': ds_crop[var].dtype.name  # preserve original dtype (e.g., 'float32', 'int16')
-                                } for var in ds_crop.data_vars
-                            }
+                    var: {
+                        'zlib': True,
+                        'complevel': 9,
+                        'dtype': ds_crop[var].dtype.name
+                    } for var in ds_crop.data_vars
+                }
+                # Add encoding for coordinates
+                for coord in ['time', 'lat', 'lon']:
+                    if coord in ds_crop.coords:
+                        encoding[coord] = {'zlib': False, 'complevel': 0}
+
                 ds_crop.to_netcdf(filepath, encoding=encoding, engine="h5netcdf")
+
             elif file_type == 'npy':
                 #print(ds_crop.to_array().values.shape)
                 array_to_save = ds_crop.to_array()[0,:,:].values
@@ -162,53 +176,12 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, ti
             else:
                 raise ValueError(f"Invalid file type: '{file_type}'")
 
-            print(out_path+'/'+filename+"_"+str(i), 'saved')
+            logging.info(f"{out_path+'/'+filename+'_'+str(i)} saved")
+            logging.info("--------------------------------------------------------------------------------")
 
         #close the dataset to free resources
         ds_crop.close()
-
-    # generate quicklooks of the random crops positions overimposed on the two fields
-    if QUICKLOOKS_CROPS and TIME_LENGTH == 1:
-
-        print("Generating quicklooks for random crops...")
-
-        # first plot: quicklooks of the two fields overimposed with the random crops positions
-        plot_crops_quicklooks_2fields(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_positions)
-
-        # second plot: plot each variabile separately for each crop position
-        plot_single_crops_images(timestamp, out_path, filename)
     
-    elif QUICKLOOKS_CROPS and TIME_LENGTH > 1:
-
-        print("Quicklooks for space-time crops.")   
-        # create gif with all time steps
-        quicklook_dir = out_path[:-3] + '/img/quicklooks/'
-
-        # create quicklook dir if it does not exist
-        if not os.path.exists(quicklook_dir):
-            os.makedirs(quicklook_dir)
-        
-        for i_time in range(len(ds_image.time)):
-
-            
-            timestamp = np.datetime_as_string(ds_image.time.values[i_time], unit='m')
-            if i_time == 0:
-                # read yy mm dd hh mm from the timestamp
-                yyyy = timestamp[0:4]
-                month = timestamp[5:7]
-                day = timestamp[8:10]
-                hour = timestamp[11:13]
-                minute = timestamp[14:16]
-                # create filename to save
-                filename_time = f"{yyyy}{month}{day}{hour}{minute}"
-
-            ds_image_time = ds_image.isel(time=i_time)
-
-            # first plot: quicklooks of the two fields overimposed with the random crops positions
-            plot_crops_quicklooks_2fields(ds_image_time, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_positions)
-
-        # create gif from the quicklooks images
-        create_gif_from_images(quicklook_dir, f"{quicklook_dir}/{filename_time}_quicklooks.gif", duration=500)
     return
 
 

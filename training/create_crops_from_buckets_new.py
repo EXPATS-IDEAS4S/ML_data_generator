@@ -29,7 +29,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cropping_functions import crops_nc_random, crops_nc_fixed, filter_by_domain, filter_by_time, apply_cma_mask
 from credentials_buckets import S3_ACCESS_KEY, S3_SECRET_ACCESS_KEY, S3_ENDPOINT_URL
 from config import *
-
+from training.data_bucket_functions import *
 import boto3
 from botocore.exceptions import ClientError
 
@@ -275,7 +275,7 @@ def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
     logging.info(f"Generating crops for timestamp: {timestamp}, saving as: {filename_to_save}")
     # generate crops based on the cropping strategy
     if CROPPING_STRATEGY == 'random':
-        crops_nc_random(ds_time, X_PIXEL, Y_PIXEL, N_SAMPLES, filename_to_save, outpath, timestamp, domain)
+        crops_nc_random(ds_timeseries, X_PIXEL, Y_PIXEL,filename_to_save, outpath, timestamp, domain)
     elif CROPPING_STRATEGY == 'fixed':
         crops_nc_fixed(ds_time, X_PIXEL, Y_PIXEL, [(CROP_UL_LAT, CROP_UL_LON)], filename_to_save, outpath, 'npy')
     else:
@@ -337,8 +337,32 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
 
         print(f"Reading variable {var_name} from bucket {bucket_names[i_var]}, file {file_names[i_var]}")
 
-        # read file object from S3 bucket
-        file_obj = read_file(s3, file_names[i_var], bucket_names[i_var])
+        # for RR then check file object
+        if var_name == 'RR_de' or var_name == 'RR_it':
+
+            # read file list on the bucket
+            dict_list = list_files_bucket(s3, bucket_names[i_var])
+            file_names = [dict_list[i]['Key']  for i in range(len(dict_list))]
+            
+            # find filename of the yyyymmdd of interest
+            file_name_to_read = None
+            for file_name in file_names:
+                if f"{yyyy}{mm:02d}{dd:02d}" in file_name:
+                    file_name_to_read = file_name
+                    break
+            if file_name_to_read is None:
+                logging.info(f"File for {var_name} not found for date {yyyy}-{mm:02d}-{dd:02d} in bucket {bucket_names[i_var]}. Skipping this day.")
+                return None, None
+            
+            # read file object from S3 bucket
+            #print(f"Reading variable {var_name} from bucket {bucket_names[i_var]}, file {file_name_to_read}")
+
+            file_obj = read_file(s3, file_name_to_read, bucket_names[i_var])
+            
+        else:
+            # read file object from S3 bucket
+            file_obj = read_file(s3, file_names[i_var], bucket_names[i_var])
+
 
         # if file not found, skip
         if file_obj is None:
@@ -349,7 +373,9 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
             # return to main and skip the day
             return None, None
             
+        # open dataset from file object
         if var_name == 'RR_de' or var_name == 'RR_it':
+            var_name = 'RR'
             # decompress gzip file
             ds = xr.open_dataset(io.BytesIO(gzip.decompress(file_obj)))
         else:
@@ -398,6 +424,7 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
 
     # merge all datasets into a single dataset
     ds_crop = xr.merge(ds_arr)
+
     return ds_crop, domain_all_data
 
 
@@ -410,29 +437,41 @@ def calc_start_time_for_days_changing(from_previous_day):
     input:
         from_previous_day: xarray Dataset containing data from the previous day
     output:
-        start_time: datetime object representing the start time for cropping
+        start_time: datetime index representing the start time for cropping
     """
     # determine the maximum daily offset
     earliest_start = max(int(N_FRAMES - MAX_TEMPORAL_OVERLAP*N_FRAMES - len(from_previous_day.time.values)), 0)
 
     # pick start time randomly between the earliest start and N_FRAMES -1
-    start_time = random.randint(earliest_start, int(N_FRAMES-1))
+    start_next = random.randint(earliest_start, int(N_FRAMES-1))
 
-    return start_time
+    return start_next
+
+
+
 def calc_start_time_for_days_full():
     """
-    Calculates the start time for cropping when processing a full day starting at 00.00 UTC
+    Calculates the start time for cropping
     It considers a maximum daily offset if specified in the configuration.
-    The start time is chosen randomly between 0 and N_FRAMES-1 if MAX_DAILY_OFFSET is not set.
-    if MAX_DAILY_OFFSET is set, it is chosen randomly between 0 and round(MAX_DAILY_OFFSET*N_FRAMES)+1 
-    where MAX_DAILY_OFFSET represents the maximum random offset at the beginning of the day
+    - If MAX_DAILY_OFFSET is not set, the start time is chosen randomly between 0 and N_FRAMES-1.
+    - If MAX_DAILY_OFFSET is set, the start time is chosen randomly between 0 and round(MAX_DAILY_OFFSET*N_FRAMES)+1, 
+    where MAX_DAILY_OFFSET represents the maximum random offset at the beginning of the day 
+    to introduce randomness in the timeseries starting times.
+
     output:
-        start_time: datetime object representing the start time for cropping
+        start_time: datetime index representing the start time for cropping
     """
     if MAX_DAILY_OFFSET is not None:
         start_time = random.randint(0, round(MAX_DAILY_OFFSET*N_FRAMES)+1)
     else:
         start_time = random.randint(0, int(N_FRAMES-1))
+
+
+    if MAX_DAILY_OFFSET is None:
+        logging.info(f"Start time for cropping: {start_time} (randomly chosen between 0 and {N_FRAMES-1})")
+    else:
+        logging.info(f"Start time for cropping: {start_time} (randomly chosen between 0 and {round(MAX_DAILY_OFFSET*N_FRAMES)+1} based on MAX_DAILY_OFFSET")
+    logging.info(f"-------------------------------------------------------------------------")
     return start_time
 
 def search_timewindow_without_nan(ds_day, start_time):
@@ -484,8 +523,14 @@ def search_timewindow_without_nan(ds_day, start_time):
         # end the loop if all timestamps are available
         searching_timeseries_window = False
 
-        # set the start for the next timeseries
+        # set the start for the next timeseries using the randomization function 
+        start_time_next = calc_start_time_for_days_full()
+        """ COMMENT: In paula's version, this line was
         start_time_next = end_time
+        i.e. the new timeseries starts right after the end of the previous one, 
+        without randomization. I changed it to introduce randomization between
+         timeseries windows, but we can change it back if we want to have 
+         consecutive timeseries without gaps in between. """
 
     return ds_timeseries, start_time_next
 
@@ -532,14 +577,14 @@ def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath):
 
     # get the date and time of the first timestamp in the timeseries
     hour, month, day, yyyy, minute = parse_timestamp(timestamp_start)
-    print(hour, month, day, minute, yyyy)
+    logging.info(f"Timestamp details -Minute: {minute}, Hour: {hour}, Month: {month}, Day: {day}, Year: {yyyy}")
 
     # check for all NaN values or values outside the specified range
     # select all data vars except RR_de and RR_it for the check of all NaN values
     vars = [var for var in ds_timeseries.data_vars if var not in ['RR_de', 'RR_it']]
     value_min = [vmin for i, vmin in enumerate(VALUE_MIN) if CLOUD_PRM[i] in vars]
     value_max = [vmax for i, vmax in enumerate(VALUE_MAX) if CLOUD_PRM[i] in vars]
-
+    
     # check for all NaN values or values outside the specified range
     is_all_nan_ds = all([xr.DataArray.isnull(ds_timeseries[var]).all() for var in vars])
     is_outside_range = any(
@@ -551,19 +596,26 @@ def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath):
         logging.info(f"Skipping timestamp {timestamp_start} due to all NaN or values outside range.")
         return
 
+
     # generate filename to save crops
     var_string = "_".join(CLOUD_PRM)
-    filename_to_save = f"{yyyy}{month}{day}_{hour}{minute}_{DOMAIN_NAME}_{var_string}"
+    logging.info(f"vars {var_string}")
 
-    logging.info(f"Generating crops for timestamp: {timestamp_start}, saving as: {filename_to_save}")
+    filename_to_save = f"{yyyy}{month}{day}_{hour}{minute}_{DOMAIN_NAME}_{var_string}"
+    logging.info(f"filename {filename_to_save}")
 
     # generate crops based on the cropping strategy
     if CROPPING_STRATEGY == 'random':
-        crops_nc_random(ds_time, X_PIXEL, Y_PIXEL, N_SAMPLES, filename_to_save, outpath, timestamp_start, domain)
+        crops_nc_random(ds_timeseries, X_PIXEL, Y_PIXEL, filename_to_save, outpath, timestamp_start, domain)
+        logging.info(f"Finished generating random crops for timestamp: {timestamp_start}")
+        logging.info("--------------------------------------------------------------------------------")
     elif CROPPING_STRATEGY == 'fixed':
-        crops_nc_fixed(ds_time, X_PIXEL, Y_PIXEL, [(CROP_UL_LAT, CROP_UL_LON)], filename_to_save, outpath, 'npy')
+        crops_nc_fixed(ds_timeseries, X_PIXEL, Y_PIXEL, [(CROP_UL_LAT, CROP_UL_LON)], filename_to_save, outpath, 'npy')
+        logging.info(f"Finished generating fixed crops for timestamp: {timestamp_start}")
+        logging.info("--------------------------------------------------------------------------------")
     else:
         raise ValueError(f"Invalid cropping strategy: {CROPPING_STRATEGY}")
+
     return
 
 
@@ -572,9 +624,6 @@ def main():
     # get start time of this script
     start_time_script = time.time()
 
-    # count days to estimate later runtime per day
-    count_days = 0
-    
     # start logger and initialize s3 client
     setup_logger()
     s3 = init_s3()
@@ -582,7 +631,7 @@ def main():
     # creating output directory for nc files and images of the crops
     cloud_prm_str = "_".join(CLOUD_PRM)
     years_str = "-".join(map(str, YEARS))
-    outpath = os.path.join(OUTPUT_BASE, f"crops_{cloud_prm_str}_{X_PIXEL}x{Y_PIXEL}_{years_str}_{N_SAMPLES}-{CROPPING_STRATEGY}-nframes-{TIME_LENGTH}.nc")
+    outpath = os.path.join(OUTPUT_BASE, f"crops_{cloud_prm_str}_{X_PIXEL}x{Y_PIXEL}_{years_str}_{N_SAMPLES}-{CROPPING_STRATEGY}-nframes-{TIME_LENGTH}")
     os.makedirs(outpath, exist_ok=True)
 
     # iterate over years, months, days to read daily files from S3 bucket
@@ -600,17 +649,22 @@ def main():
                 # read variables to read and access all files with their corresponding paths built with a function
                 bucket_names, file_names = read_bucket_name_path(year, month, day)
 
-                # read, crop, resample and merge all variables of interest into a single dataset 
+                # read, crop, resample and merge all variables of interest into a single dataset for the day
                 ds_crop, domain_all_data = prepare_joint_dataset(s3, bucket_names, file_names, year, month, day)
+
                 if ds_crop is None:
                     logging.info(f"Skipping {year}-{month:02d}-{day:02d} due to missing files.")
                     continue
+                else:
+                    logging.info(f"Processing date: {year}-{month:02d}-{day:02d} - all input data found")
+                    logging.info('----------------------------------------------')
 
                 # extraction of crops for each timestamp and plotting
 
                 # processing for one only space cropping - 1 single time stamp
                 # ************************************************************
                 if TIME_LENGTH == 1:
+                    logging.info("Processing single timestamp crops.")
                     for timestamp in ds_crop.time.values:
                         try:
                             ds_time = filter_by_time(ds_crop, timestamp)
@@ -623,6 +677,7 @@ def main():
                 # processing for space-time cropping - N_FRAMES time stamps
                 # ************************************************************
                 else:
+                    logging.info(f"Processing space-time crops:{TIME_LENGTH} timestamps per sample.")
 
                     # if there is data carried over from the previous day, process it first
                     if from_previous_day is not None:
@@ -636,11 +691,11 @@ def main():
                         # process this timeseries if it is complete before moving on with the normal processing of the next day
                         if not is_all_nan.any():
 
-                            # define start time index for the cropping at the next time stamp
-                            start_time = calc_start_time_for_days_changing(from_previous_day)
+                            # define start time index for the next time series when data exists from previous day
+                            start_next = calc_start_time_for_days_changing(from_previous_day)
 
                             # crop time series 
-                            timestamp_start = ds_timeseries.time.values[0]
+                            timestamp_start = ds_timeseries.time.values[0] # first time stamp of the dataset selected by merging
                             crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath)
 
                             # reset from_previous_day to None
@@ -651,17 +706,24 @@ def main():
                             logging.info("Skipping timeseries from previous day due to all NaN values.")
                             start_time = random.randint(0, int(N_FRAMES-1))
 
+                        logging.info(f"start_time for next iteration: {ds_timeseries.time[start_time].values}")
                     # no data from previous day, set start time randomly
                     else:
 
-                        # generate start_time index randomly based on MAX_TEMPORAL_OVERLAP and 
+                        # generate start_time index randomly based on MAX_TEMPORAL_OVERLAP and MAX_DAILY_OFFSET
                         start_time = calc_start_time_for_days_full()
+
+                        logging.info(f"Initial start_time for the day: {ds_crop.time[start_time].values}")
+                        
 
                         # loop over until the end of the day
                         while start_time < len(ds_crop.time.values):
-
+                            
                             # find timeseries window without NaN values and next start time
-                            ds_timeseries, start_time = search_timewindow_without_nan(ds_crop, start_time)
+                            ds_timeseries, start_next = search_timewindow_without_nan(ds_crop, start_time)
+
+                            logging.info(f"Start time of the current timeseries window: {ds_timeseries.time[0].values}")
+                            logging.info(f"start time for the next iteration: {ds_crop.time[start_next].values}")
 
                             # if timeseries is incomplete, break the loop
                             if ds_timeseries is None:
@@ -677,7 +739,10 @@ def main():
                                 # crop time series starting from start_time
                                 timestamp_start = ds_timeseries.time.values[0]
                                 crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath)   
-        
+
+                    # set start time for the next iteration of the loop to the start time of the next timeseries window
+                    start_time = start_next
+
         # print progress
         print("----------------------------------------------", flush=True)
         temp_runtime = time.time() - start_time_script
