@@ -25,17 +25,15 @@ def read_orography():
     return ds
 
 
-def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_position):
+
+
+def plot_crops_quicklooks_2fields(ds_crop, filename, out_path, timestamp, domain, crop_position):
     """
     Generates and saves quicklook images for the given crop dataset.
     This function creates quicklook images for the provided crop dataset and saves them
     in the specified output directory. The quicklook images are saved in an 'img' subdirectory.
     :param ds_crop: xarray.Dataset or xarray.DataArray
         The input dataset containing the cropped image data.
-    :param x_pixel: int
-        The width of the crop in pixels.
-    :param y_pixel: int
-        The height of the crop in pixels.
     :param filename: str
         The base filename for saving the quicklook images.
     :param out_path: str
@@ -62,7 +60,7 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
     hour, month, day, yyyy, minute = parse_timestamp(timestamp)
 
     # create output directory for quicklooks if it does not exist
-    quicklook_dir = out_path + '/img/quicklooks/'
+    quicklook_dir = out_path 
     if not os.path.exists(quicklook_dir):
         os.makedirs(quicklook_dir)
     
@@ -143,10 +141,13 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
     colors = np.vstack(([1, 1, 1, 1], viridis))  # RGBA for white
 
     custom_cmap = ListedColormap(colors)
-    if CLOUD_PRM[2] == 'RR_de' or CLOUD_PRM[2] == 'RR_it':
+    print(CLOUD_PRM[2])
+    if (CLOUD_PRM[2] == 'RR_de') or (CLOUD_PRM[2] == 'RR_it'):
+        print('plotting RR')
         par_plot = 'RR'
     else:
         par_plot = CLOUD_PRM[2]
+
     c3 = ax3.pcolormesh(lons, 
                         lats, 
                         data[par_plot], 
@@ -179,7 +180,7 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
 
     c44 = ax4.pcolormesh(lons, 
                         lats, 
-                        data[CLOUD_PRM[2]], 
+                        data[par_plot], 
                         cmap=custom_cmap,
                         vmin=VALUE_MIN[2],
                         vmax=VALUE_MAX[2],
@@ -203,19 +204,19 @@ def plot_crops_quicklooks_2fields(ds_crop, x_pixel, y_pixel, filename, out_path,
         axi.set_extent([domain[0], domain[1], domain[2], domain[3]], crs=ccrs.PlateCarree())
     
     # add rectangles for each crop to both subplots
-    for pos in crop_positions:
-        lonmin, lonmax, latmin, latmax = pos
-        rect0 = plt.Rectangle((lonmin, latmin), lonmax - lonmin, latmax - latmin,
+
+    lonmin, lonmax, latmin, latmax = crop_position
+    rect0 = plt.Rectangle((lonmin, latmin), lonmax - lonmin, latmax - latmin,
                              linewidth=3, edgecolor='orange', facecolor='none', transform=ccrs.PlateCarree())
-        ax4.add_patch(rect0)
+    ax4.add_patch(rect0)
 
 
     # position title closer to the plots
     fig.suptitle(f'{yyyy}-{month}-{day} {hour}:{minute} UTC', y=0.95)
-    fig.savefig(f"{quicklook_dir}{yyyy}{month}{day}{hour}{minute}_quicklooks_random_crops.png", transparent=True, dpi=300)
+    fig.savefig(os.path.join(out_path, filename), transparent=True, dpi=300)
     plt.close() 
 
-    print(quicklook_dir+f"{yyyy}{month}{day}_quicklooks_random_crops.png", 'SAVED PNG')
+    print(os.path.join(out_path, filename), 'SAVED PNG')
 
     return None
 
@@ -286,3 +287,72 @@ def plot_single_crops_images(timestamp, out_path, filename):
             print(f'Saved crop image: {output_file_name}')
 
     return None
+
+
+
+
+
+def video_quicklook(crop_file, output_dir):
+    """
+    (ds_crop, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_position)
+    Creates a video quicklook of the space-time crop evolution in time.
+
+    input:
+        crop_file: path to the netcdf file containing the space-time crop
+        output_dir: directory where the video quicklook will be saved
+    """
+
+    ds = xr.open_dataset(crop_file)
+    n_time_stamps = len(ds.time.values) 
+
+    # init list to store the images for the video
+    images = []
+
+    # loop on time stamps
+    for i in range(n_time_stamps):
+        
+        # select the data for the current time stamp
+        data = ds.isel(time=i)
+        timestamp = str(data.time.values)
+        string_timestamp = timestamp.split('T')[0].split('-')[0] + timestamp.split('T')[0].split('-')[1] + timestamp.split('T')[0].split('-')[2] + '_' + timestamp.split('T')[1][0:2] + timestamp.split('T')[1][3:5]
+        
+        # save the first and the last timestamp for the title of the video
+        if i == 0:
+            start_time = string_timestamp
+        elif i == n_time_stamps-1:
+            end_time = string_timestamp[9:13]
+        else: 
+            pass
+        
+        # find lat max and lat min of the crop
+        lat_min = np.nanmin(data.lat.values)
+        lat_max = np.nanmax(data.lat.values)
+        lon_min = np.nanmin(data.lon.values)
+        lon_max = np.nanmax(data.lon.values)
+        crop_position = (lon_min, lon_max, lat_min, lat_max)
+        print(crop_position)
+
+        # build image filename
+        filename = f'{string_timestamp}_crop_{i}.png'
+
+        # extract string from time stamp
+        year = str(timestamp).split('T')[0].split('-')[0]
+
+        # creat filename
+        image_path = os.path.join(output_dir, filename)
+
+        # call the function plot_crops_quicklooks_2fields to plot the data
+        plot_crops_quicklooks_2fields(data, filename, output_dir, timestamp, DOMAIN, crop_position)
+
+        # check if output dir exists and if not create it
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        images.append(PIL.Image.open(image_path))
+
+    # create video from the images
+    video_path = os.path.join(output_dir, f'{start_time}_{end_time}_video_quicklook.gif')
+    images[0].save(video_path, save_all=True, append_images=images[1:], duration=500, loop=0)
+    print(f'Video quicklook saved at: {video_path}')    
+
+    return video_path
