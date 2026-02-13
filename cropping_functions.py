@@ -116,10 +116,6 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
     y = len(ds_image.lat.values)
     #print(x,y)
     
-    # store crop coordinates for plotting quicklooks later
-    if QUICKLOOKS_CROPS:
-        crop_positions = []
-
     # loop over the number of samples in space to generate random crops
     for i in range(N_SAMPLES):
 
@@ -133,11 +129,7 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
         lonmin = ds_image.lon.values[x1]
         lonmax = ds_image.lon.values[x1+x_pixel-1]
         #print([lonmin, lonmax, latmin, latmax])
-
-        # store in a list the latmax/latmin e lonmax/lonmin for each crop for plotting quicklooks later
-        if QUICKLOOKS_CROPS:
-            crop_positions.append([lonmin, lonmax, latmin, latmax])
-            
+ 
         #crop the dataset besed on the random x and y (the upper left point of the crop)
         ds_crop = filter_by_domain(ds_image,[lonmin, lonmax, latmin, latmax])
 
@@ -149,6 +141,13 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
             
             # store ds crop in a list of crops for the space-time series
             ds_crop_timeseries.append(ds_crop)
+
+            # add crop coordinates as attributes to the dataset to keep track of
+            # the crop position in the original domain
+            ds_crop.attrs['lonmin'] = float(lonmin)
+            ds_crop.attrs['lonmax'] = float(lonmax)
+            ds_crop.attrs['latmin'] = float(latmin)
+            ds_crop.attrs['latmax'] = float(latmax)
 
             #save the crops in nc format to keep actual values and lat/lon coordinates
             filepath = out_path+'/'+str(filename)+"_"+str(i)+'.'+file_type
