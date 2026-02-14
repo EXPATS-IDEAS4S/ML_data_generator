@@ -30,6 +30,23 @@ def calc_start_time_for_days_changing(from_previous_day):
     return start_next
 
 
+def calc_random_indices(ind_reference):
+    """
+    Calculates a list of N_RANDOM_TIMES unique random indices for cropping within a
+    given time window defined by ind_reference and N_FRAMES.
+    The first index is always ind_reference, the rest are random and unique.
+    """
+
+    inds_random = set()
+    
+    inds_random.add(ind_reference)
+    while len(inds_random) < N_RANDOM_TIMES:
+        rand_idx = random.randint(0, N_FRAMES-1) + ind_reference
+        inds_random.add(rand_idx)
+
+    return list(inds_random)
+
+
 
 
 

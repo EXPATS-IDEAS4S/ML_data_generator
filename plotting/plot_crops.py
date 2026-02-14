@@ -14,8 +14,9 @@ import logging
 import pdb
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import ListedColormap, BoundaryNorm
-
 from matplotlib.colors import ListedColormap
+from training.config import *
+import ffmpeg
 
 def read_orography():
 
@@ -23,6 +24,59 @@ def read_orography():
     print(ds)
 
     return ds
+
+
+
+def retrieve_plotting_params_from_config(variable):
+    """
+    Retrieve plotting parameters for a given variable from the plotting_dict 
+    using settings defined in the config file. This allows to keep all 
+    plotting parameters in a single place and avoid hardcoding them 
+    in the plotting functions.
+    The plotting_dict is generated as a loop on CLOUD_PRM, to 
+    ensure consistency with the variables selected in the config
+     file and to avoid hardcoding the variable names and related 
+     parameters in the plotting
+
+    input:
+    - variable: name of the variable for which to retrieve the 
+    plotting parameters, should be one of the variables in CLOUD_PRM
+    output:
+    - dictionary with plotting parameters for the given variable,
+    including colormap, colorbar limits, units, title, variable name in the dataset
+
+    """
+    # generate plotting dictionart as a loop on cloud_prm, to avoid hardcoding the variable names and related parameters in the plotting functions, 
+    # but keep them in a single place for easier maintenance and consistency check with the config settings
+    plotting_dict = {}
+    for var, vmin, vmax, unit, color, norm, cbar_ticks, title in zip(CLOUD_PRM, VALUE_MIN, VALUE_MAX, UNITS, COLORBARS, NORMS, CBAR_TICKS, TITLES):
+        if var == 'cma': # if variable is CMA mask, use specific colormap and normalization settings defined in the config file
+            plotting_dict[var] = {
+                'variable': var,
+                'colormap': color,
+                'vmin': vmin,
+                'vmax': vmax,
+                'units': unit,
+                'title': title,
+                'norm': norm, 
+
+                'cbar_ticks': cbar_ticks, # use specific colorbar ticks for the CMA mask, defined in the config file
+                'var_nc': var # for CMA mask, the name in the dataset is the same as the variable name in CLOUD_PRM
+            }
+        else: 
+            plotting_dict[var] = {
+                'variable': var,
+                'colormap': color,
+                'vmin': vmin,
+                'vmax': vmax,
+                'units': unit,
+                'title': title,
+                'var_nc': var if var != 'RR_de' and var != 'RR_it' else 'RR' # for radar variable, the name in the dataset is RR, not RR_de or RR_it
+            }
+    if variable in plotting_dict:
+        return plotting_dict[variable]
+    else:
+        raise ValueError(f"Variable {variable} not found in plotting_dict. Please check the variable name and the plotting_dict configuration.")
 
 
 
@@ -47,203 +101,132 @@ def plot_crops_quicklooks_2fields(ds_crop, filename, out_path, timestamp, domain
     :return: None
     """
 
-    # read orography data
-    ds_orog = read_orography()
-    ds_orog_crop = ds_orog.sel(lat=ds_crop.lat, lon=ds_crop.lon, method='nearest')
+    # check if the plot already exists, if yes, skip the plotting
+    if os.path.exists(os.path.join(out_path, filename)):
+        print(f'Plot for timestamp {timestamp} already exists, skipping plotting.')
+        return None
 
-
-    # set all fontsize of the plot to 20
-    plt.rcParams.update({'font.size': 18})
-
-    # read year, month, day, minute, hour from timestamp
-    from create_crops_from_buckets_new import parse_timestamp
-    hour, month, day, yyyy, minute = parse_timestamp(timestamp)
-
-    # create output directory for quicklooks if it does not exist
-    quicklook_dir = out_path 
-    if not os.path.exists(quicklook_dir):
-        os.makedirs(quicklook_dir)
-    
-    logging.info(f"created path for quicklooks: {quicklook_dir}")
-
-    # Extract variables
-    if ds_crop.dims.get('time') is not None:
-
-        data = ds_crop.sel(time=timestamp)  # Select first (only) time index
     else:
-        data = ds_crop
 
-    lons, lats = data.lon, data.lat
-    
-    # plot 4 subplots with: 
-    # - IR in greyscale,
-    # - RR with transparent colormap for zero values, 
-    # - cloud mask, 
-    # - all fields superimposed with rectangles for each crop, cloud mask as hatched areas, IR grey scale, RR in Oranges.
-    fig = plt.figure(figsize=(15, 15), constrained_layout=True)
+        # set all font size of the plot to 20
+        plt.rcParams.update({'font.size': 20})
 
-    # defining new grid layout
-    gs = gridspec.GridSpec(2, 3, height_ratios=[1, 2])
+        # read orography data
+        ds_orog = read_orography()
+        ds_orog_crop = ds_orog.sel(lat=ds_crop.lat, lon=ds_crop.lon, method='nearest')
 
-    # Top row: three panels
-    ax1 = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
-    ax2 = fig.add_subplot(gs[0, 1], projection=ccrs.PlateCarree())
-    ax3 = fig.add_subplot(gs[0, 2], projection=ccrs.PlateCarree())
-    ax4 = fig.add_subplot(gs[1, :], projection=ccrs.PlateCarree())
+        # select data for the given time stamp
+        if ds_crop.dims.get('time') is not None:
+            data = ds_crop.sel(time=timestamp)  # Select first (only) time index
+        else:
+            data = ds_crop
+        
+        # creating figure with 4 sublots: one for each variable in CLOUD_PRM, 
+        # with the same domain and extent of the crop, and one with all variables 
+        # superimposed, with rectangles for each crop and cloud mask as hatched areas.
+        # The first three subplots are in the top row, the last subplot is in the bottom
+        # row and spans all columns. The title of the figure is the timestamp of the data.
+        # The output image is saved in the output directory with the name defined above.
 
-    # plot the first variable in greyscale
-    c = ax1.pcolormesh(lons, 
-                        lats, 
-                        data[CLOUD_PRM[0]], 
-                        cmap="Greys", 
-                        vmin=VALUE_MIN[0],
-                        vmax=VALUE_MAX[0],
-                        transform=ccrs.PlateCarree())
+        if len(CLOUD_PRM) == 3:
+            fig, axes = plt.subplots(2, 2, figsize=(20, 20), subplot_kw={'projection': ccrs.PlateCarree()},  constrained_layout=True)
+        else:
+            raise ValueError("Number of variables in CLOUD_PRM not supported for plotting. Please select 3 variables.")
 
-    cbar = plt.colorbar(c, ax=ax1, orientation="horizontal", pad=0.02)                        
-    cbar.set_label("IR 108 Temperature [K]")
+        # flatten axes for easier indexing
+        axes = axes.flatten()
 
-    # plot the second variable with transparent colormap for zero values
+        # loop on variables and plot them in the subplots
+        for i, var in enumerate(CLOUD_PRM):
 
-    # set to zero all values where CMA is nan
-    data[CLOUD_PRM[1]] = data[CLOUD_PRM[1]].fillna(0.)
+            # retrieving parameters for the variable from the config file  
+            plotting_params = retrieve_plotting_params_from_config(var)
 
-    cmap_cma = ListedColormap(['lightgrey', 'yellow'])
-    bounds = [-0.5, 0.5, 1.5]
-    norm = BoundaryNorm(bounds, cmap_cma.N)
+            # start plotting subplots
+            if not var == 'cma': # if variable is not CMA mask, plot it with the specified colormap and colorbar limits
+                c = axes[i].pcolormesh(data.lon, 
+                                        data.lat, 
+                                        data[plotting_params['var_nc']],
+                                        cmap=plotting_params['colormap'], 
+                                        vmin=plotting_params['vmin'], 
+                                        vmax=plotting_params['vmax'], 
+                                        transform=ccrs.PlateCarree())
+                cbar = plt.colorbar(c, ax=axes[i], orientation="vertical", pad=0.02)
+                # make cbar aligned with plot margins   
+                cbar.set_label(plotting_params['units'])
+                cbar.ax.xaxis.set_label_position('top')
+                cbar.ax.xaxis.set_ticks_position('top')
 
-    # print unique values of cloud mask
-    unique_values = np.unique(data[CLOUD_PRM[1]].values)
-    print("Unique values in cloud mask:", unique_values)    
+            else:
+                # if variable is CMA mask, plot it with the specified colormap and normalization settings defined in the config file
+                c = axes[i].pcolormesh(data.lon, data.lat, data[plotting_params['var_nc']], 
+                                        cmap=plotting_params['colormap'], 
+                                        norm=plotting_params['norm'], 
+                                        transform=ccrs.PlateCarree())
+                cbar = plt.colorbar(c, ax=axes[i], orientation="vertical", pad=0.02,
+                                    boundaries=plotting_params['norm'].boundaries,
+                                    ticks=plotting_params['cbar_ticks'])
+                cbar.ax.set_yticklabels(['clear', 'cloudy'])
 
-    # plot of cloud mask
-    c2 = ax2.pcolormesh(lons, 
-                        lats, 
-                        data[CLOUD_PRM[1]], 
-                        cmap=cmap_cma, 
-                        norm=norm,
-                        transform=ccrs.PlateCarree())
+            # adding borders, coastlines, and setting extent for each subplot
+            cbar.set_label(plotting_params['units'])
+            axes[i].set_title(plotting_params['title'])
+            axes[i].set_xlabel("Longitude")
+            axes[i].set_ylabel("Latitude")
+            axes[i].add_feature(cfeature.BORDERS, linestyle='-', linewidth=2, color="black")  
+            axes[i].add_feature(cfeature.COASTLINE)  
+            #axes[i].set_extent([crop_position[0], crop_position[1], crop_position[2], crop_position[3]], crs=ccrs.PlateCarree())
 
-    cbar = plt.colorbar(c2, 
-                        ax=ax2,
-                        orientation="horizontal", 
-                        pad=0.02,
-                        boundaries=[-0.5, 0.5, 1.5],
-                        ticks=[0., 1.])
-    cbar.ax.set_xticklabels(['clear', 'cloudy'])    
-    cbar.set_label("Cloud Mask") 
+        # adding last subplot
+        axes[3].set_title("All fields superimposed")
+        axes[3].set_xlabel("Longitude")
+        axes[3].set_ylabel("Latitude")
+        axes[3].set_extent([DOMAIN[0], DOMAIN[1], DOMAIN[2], DOMAIN[3]], crs=ccrs.PlateCarree())
+        axes[3].add_feature(cfeature.BORDERS, linestyle='-', linewidth=2, color="black")
+        axes[3].add_feature(cfeature.COASTLINE)
 
+        # plot all fields superimposed
+        plotting_par_IR = retrieve_plotting_params_from_config(CLOUD_PRM[0])
+        c4 = axes[3].pcolormesh(data.lon, 
+                            data.lat, 
+                            data[plotting_par_IR['var_nc']], 
+                            cmap=plotting_par_IR['colormap'], 
+                            vmin=plotting_par_IR['vmin'],
+                            vmax=plotting_par_IR['vmax'],
+                            transform=ccrs.PlateCarree())
 
-    # third plot: rain rate
-    # Create a viridis colormap
-    viridis = plt.cm.viridis(np.linspace(0, 1, 255))
-    # Prepend white for zero
-    colors = np.vstack(([1, 1, 1, 1], viridis))  # RGBA for white
+        plotting_par_radar = retrieve_plotting_params_from_config(CLOUD_PRM[2])
+        c44 = axes[3].pcolormesh(data.lon, 
+                            data.lat, 
+                            data[plotting_par_radar['var_nc']], 
+                            cmap=plotting_par_radar['colormap'],
+                            vmin=plotting_par_radar['vmin'],
+                            vmax=plotting_par_radar['vmax'],
+                            alpha=0.6,
+                            transform=ccrs.PlateCarree())
+        
+        # plot white hatched areas for cloud mask
+        plotting_par_cma = retrieve_plotting_params_from_config(CLOUD_PRM[1])
+        contour = axes[3].contourf(data.lon, 
+                            data.lat, 
+                            data[plotting_par_cma['var_nc']], 
+                            levels=[0.5, 1.5], 
+                            colors='none',  # No fill color
+                            hatches=['.'],  # Hatch pattern
+                            transform=ccrs.PlateCarree())
 
-    custom_cmap = ListedColormap(colors)
-    print(CLOUD_PRM[2])
-    if (CLOUD_PRM[2] == 'RR_de') or (CLOUD_PRM[2] == 'RR_it'):
-        print('plotting RR')
-        par_plot = 'RR'
-    else:
-        par_plot = CLOUD_PRM[2]
-
-    c3 = ax3.pcolormesh(lons, 
-                        lats, 
-                        data[par_plot], 
-                        cmap=custom_cmap, 
-                        vmin=0.,
-                        vmax=40.,
-                        transform=ccrs.PlateCarree())   
-    cbar3 = plt.colorbar(c3, ax=ax3, orientation="horizontal", pad=0.02)                        
-    cbar3.set_label("RR [mm/h]")
-
-
-    # add orography contours to RR plot
-    orog_contour = ax3.contour(ds_orog_crop['lon'],
-                        ds_orog_crop['lat'],
-                        ds_orog_crop['DEM'],
-                        levels=[500., 1000., 1500.],
-                        colors='grey',
-                        linewidths=1.,
-                        transform=ccrs.PlateCarree())
-    ax3.clabel(orog_contour, fmt='%d', inline=True, fontsize=10)
-
-    # plot all fields superimposed
-    c4 = ax4.pcolormesh(lons, 
-                        lats, 
-                        data[CLOUD_PRM[0]], 
-                        cmap="Greys", 
-                        vmin=VALUE_MIN[0],
-                        vmax=VALUE_MAX[0],
-                        transform=ccrs.PlateCarree())
-
-    c44 = ax4.pcolormesh(lons, 
-                        lats, 
-                        data[par_plot], 
-                        cmap=custom_cmap,
-                        vmin=VALUE_MIN[2],
-                        vmax=VALUE_MAX[2],
-                        alpha=0.6,
-                        transform=ccrs.PlateCarree())
-    
-    # plot white hatched areas for cloud mask
-    levels = [0., 0.5]  # Only hatch values above 0.5
-    contour = ax4.contourf(lons, 
-                        lats, 
-                        data['cma'], 
-                        levels=levels, 
-                        colors='none',  # No fill color
-                        hatches=['x'],  # Hatch pattern
-                        transform=ccrs.PlateCarree())
-
-    # add country borders and coastline to all subplots
-    for axi in [ax1, ax2, ax3, ax4]:
-        axi.add_feature(cfeature.BORDERS, linestyle='-', linewidth=2, color="black")  
-        axi.add_feature(cfeature.COASTLINE)  
-        axi.set_extent([domain[0], domain[1], domain[2], domain[3]], crs=ccrs.PlateCarree())
-    
-    # add rectangles for each crop to both subplots
-
+    # add rectangles of crop position to the last subplot
     lonmin, lonmax, latmin, latmax = crop_position
     rect0 = plt.Rectangle((lonmin, latmin), lonmax - lonmin, latmax - latmin,
                              linewidth=3, edgecolor='orange', facecolor='none', transform=ccrs.PlateCarree())
-    ax4.add_patch(rect0)
-
+    axes[3].add_patch(rect0)
 
     # position title closer to the plots
-    fig.suptitle(f'{yyyy}-{month}-{day} {hour}:{minute} UTC', y=0.95)
+
     fig.savefig(os.path.join(out_path, filename), transparent=True, dpi=300)
     plt.close() 
 
     print(os.path.join(out_path, filename), 'SAVED PNG')
-
-    return None
-
-def plot_test():
-
-    import matplotlib.pyplot as plt
-    import matplotlib.gridspec as gridspec
-    
-    fig = plt.figure(figsize=(15, 10))
-    gs = gridspec.GridSpec(2, 3, height_ratios=[1, 1.2])
-    
-    # Top row: three panels
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax3 = fig.add_subplot(gs[0, 2])
-    
-    # Bottom row: one big panel spanning all columns
-    ax4 = fig.add_subplot(gs[1, :])
-    
-    # Example: plot something
-    # ax1.plot(...), ax2.plot(...), ax3.plot(...), ax4.plot(...)
-    
-    plt.tight_layout()
-    # save fig
-    plt.savefig('test_grid_layout.png', dpi=300)
-    plt.show()
-
     return None
 
 
@@ -263,6 +246,7 @@ def plot_single_crops_images(timestamp, out_path, filename):
     quicklook_dir = out_path[:-3] + '/img/crops_images/'
     if not os.path.exists(quicklook_dir):
         os.makedirs(quicklook_dir)
+
 
     from create_crops_from_buckets_new import parse_timestamp
     hour, month, day, yyyy, minute = parse_timestamp(timestamp)
@@ -292,7 +276,7 @@ def plot_single_crops_images(timestamp, out_path, filename):
 
 
 
-def video_quicklook(crop_file, output_dir):
+def video_quicklook(crop_file, output_dir, crop_id):
     """
     (ds_crop, x_pixel, y_pixel, filename, out_path, timestamp, domain, crop_position)
     Creates a video quicklook of the space-time crop evolution in time.
@@ -300,10 +284,18 @@ def video_quicklook(crop_file, output_dir):
     input:
         crop_file: path to the netcdf file containing the space-time crop
         output_dir: directory where the video quicklook will be saved
+        crop_id: spatial id of the crop to plot, should be 0 or 1, used to select the correct plotting function for the quicklook
     """
 
     ds = xr.open_dataset(crop_file)
     n_time_stamps = len(ds.time.values) 
+
+    # read latmax, latmin, lonmax, lonmin of the crop from the attributes of the nc file
+    lat_min = ds.attrs['latmin']
+    lat_max = ds.attrs['latmax']
+    lon_min = ds.attrs['lonmin']
+    lon_max = ds.attrs['lonmax']
+    crop_position = (lon_min, lon_max, lat_min, lat_max)
 
     # init list to store the images for the video
     images = []
@@ -323,17 +315,9 @@ def video_quicklook(crop_file, output_dir):
             end_time = string_timestamp[9:13]
         else: 
             pass
-        
-        # find lat max and lat min of the crop
-        lat_min = np.nanmin(data.lat.values)
-        lat_max = np.nanmax(data.lat.values)
-        lon_min = np.nanmin(data.lon.values)
-        lon_max = np.nanmax(data.lon.values)
-        crop_position = (lon_min, lon_max, lat_min, lat_max)
-        print(crop_position)
 
         # build image filename
-        filename = f'{string_timestamp}_crop_{i}.png'
+        filename = f'{string_timestamp}_crop_{i}_spacecrop_{crop_id}.png'
 
         # extract string from time stamp
         year = str(timestamp).split('T')[0].split('-')[0]
@@ -351,8 +335,131 @@ def video_quicklook(crop_file, output_dir):
         images.append(PIL.Image.open(image_path))
 
     # create video from the images
-    video_path = os.path.join(output_dir, f'{start_time}_{end_time}_video_quicklook.gif')
+    video_path = os.path.join(output_dir, f'{start_time}_{end_time}_spatialcrop_{crop_id}_vquicklook.gif')
     images[0].save(video_path, save_all=True, append_images=images[1:], duration=500, loop=0)
     print(f'Video quicklook saved at: {video_path}')    
 
+    # convert gif to mpf using ffmpeg, to reduce the file size and make it easier to visualize
+    video_path_mp4 = video_path.replace('.gif', '.mp4')
+    os.system(f'ffmpeg -i {video_path} -vcodec libx264 -pix_fmt yuv420p {video_path_mp4}')
+    print(f'Video quicklook saved at: {video_path_mp4}')
+
+    # if present, re\move the gif file to save space
+    if os.path.exists(video_path):
+        os.remove(video_path)
+
+    # if quicklook video is created, remove all png images in the output directory
+    if os.path.exists(video_path_mp4):
+        for f in os.listdir(output_dir):
+            if f.endswith('.png'):
+                os.remove(os.path.join(output_dir, f))
+    
     return video_path
+
+
+
+def plot_data_for_timestamp(ds_time, timestamp, out_path):
+    """
+    Plots the original data for the given timestamp and saves the plot in the output directory.
+    This function is used to check the data selection for each timestamp.
+    :param ds_time: xarray.Dataset
+        The input dataset containing the original data for all timestamps.
+    :param timestamp: str           
+        The timestamp associated with the dataset, used for naming the output files.    
+    :param out_path: str
+        The output directory where the plot will be saved.
+    :param domain: tuple
+        The domain for the input file (lon_min, lon_max, lat_min, lat_max).
+    :return: None
+
+    The plot is a collection of suplots for all the variables in CLOUD_PRM
+
+    input:
+        - ds_time: xarray.Dataset containing the original data for the selected timestamp to plot
+        - timestamp: str, the timestamp associated with the dataset, used for naming the output files
+        - out_path: str, the output directory where the plot will be saved
+
+    dependencies:
+    - retrieve_plotting_params_from_config: function to retrieve plotting parameters for 
+    each variable from the config file, used to keep all plotting parameters in a single
+     place and avoid hardcoding them in the plotting functions
+
+    returns:
+    - None, the function saves the plot in the output directory and does not return anything
+    """
+    # define output filename based on timestamp, with format YYYYMMDD_HHMM_original_data.png
+    # format time stamp as YYYYMMDD_HHMM
+    out_path = os.path.join(out_path, 'original_data')
+    str_timestamp = str(timestamp)
+    timestamp_string = str_timestamp.split('T')[0].split('-')[0] + str_timestamp.split('T')[0].split('-')[1] + str_timestamp.split('T')[0].split('-')[2] + '_' + str_timestamp.split('T')[1][0:2] + str_timestamp.split('T')[1][3:5]
+    filename = f'{timestamp_string}_original_data.png'
+
+    # check if the plot already exists, if yes, skip the plotting
+    if os.path.exists(os.path.join(out_path, filename)):
+        print(f'Plot for timestamp {timestamp} already exists, skipping plotting.')
+        return None
+    else:
+
+        # set all font size of the plot to 20
+        plt.rcParams.update({'font.size': 20})
+        
+        # based on the number of variables in CLOUD_PRM, create a grid of subplots
+        if len(CLOUD_PRM) == 1:
+            fig, ax = plt.subplots(1, 1, figsize=(10, 10), subplot_kw={'projection': ccrs.PlateCarree()})
+            axes = [ax]
+        elif len(CLOUD_PRM) == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(20, 10), subplot_kw={'projection': ccrs.PlateCarree()})
+        elif len(CLOUD_PRM) == 3:
+            fig, axes = plt.subplots(1, 3, figsize=(30, 10), subplot_kw={'projection': ccrs.PlateCarree()})
+        elif len(CLOUD_PRM) == 4:
+            fig, axes = plt.subplots(2, 2, figsize=(30, 20), subplot_kw={'projection': ccrs.PlateCarree()})
+            axes = axes.flatten()
+        else:
+            raise ValueError("Number of variables in CLOUD_PRM not supported for plotting. Please select 1, 2, 3 or 4 variables.")
+
+        # loop on variables and plot them in the subplots
+        for i, var in enumerate(CLOUD_PRM):
+            #print(f"Plotting variable: {var} for timestamp: {timestamp}")  
+
+            plotting_params = retrieve_plotting_params_from_config(var)
+
+            if var == 'RR_de' or var == 'RR_it':
+                var_plot = 'RR'
+            else:
+                var_plot = var
+
+            if not var == 'cma': # if variable is not CMA mask, plot it with the specified colormap and colorbar limits
+                c = axes[i].pcolormesh(ds_time.lon, ds_time.lat, ds_time[var_plot][0],
+                                        cmap=plotting_params['colormap'], 
+                                        vmin=plotting_params['vmin'], 
+                                        vmax=plotting_params['vmax'], 
+                                        transform=ccrs.PlateCarree())
+                cbar = plt.colorbar(c, ax=axes[i], orientation="horizontal", pad=0.02, shrink=0.8)
+            else:
+                # if variable is CMA mask, plot it with the specified colormap and normalization settings defined in the config file
+                c = axes[i].pcolormesh(ds_time.lon, ds_time.lat, ds_time[var][0], 
+                                        cmap=plotting_params['colormap'], 
+                                        norm=plotting_params['norm'], 
+                                        transform=ccrs.PlateCarree())
+                cbar = plt.colorbar(c, ax=axes[i], orientation="horizontal", pad=0.02, shrink=0.8,
+                                    boundaries=plotting_params['norm'].boundaries,
+                                    ticks=plotting_params['cbar_ticks'])
+                cbar.ax.set_xticklabels(['clear', 'cloudy'])
+
+            cbar.set_label(plotting_params['units'])
+            axes[i].set_title(plotting_params['title'])
+            axes[i].set_xlabel("Longitude")
+            axes[i].set_ylabel("Latitude")
+            axes[i].add_feature(cfeature.BORDERS, linestyle='-', linewidth=2, color="black")  
+            axes[i].add_feature(cfeature.COASTLINE)  
+            axes[i].set_extent([DOMAIN[0], DOMAIN[1], DOMAIN[2], DOMAIN[3]], crs=ccrs.PlateCarree())
+
+
+
+        # save plot with name containing the timestamp
+        
+        plt.savefig(os.path.join(out_path, filename), dpi=300)
+        plt.close()
+        
+        #print(f'Original data plot saved at: {os.path.join(out_path, filename)}')
+        return None

@@ -27,17 +27,19 @@ import traceback
 import boto3
 from botocore.exceptions import ClientError
 import sys
+import pandas as pd
 
 # instructiosn to import from parent directory
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from cropping_functions import crops_nc_random, crops_nc_fixed, filter_by_domain, filter_by_time, apply_cma_mask
 from credentials_buckets import S3_ACCESS_KEY, S3_SECRET_ACCESS_KEY, S3_ENDPOINT_URL
 from config import *
 from data_bucket_functions import init_s3, list_files_bucket, check_file_bucket, read_file, read_bucket_name_path
 
-from space_time_functions import calc_start_time_for_days_changing, calc_start_time_for_days_full, search_timewindow_without_nan
+from space_time_functions import calc_start_time_for_days_changing, calc_start_time_for_days_full, search_timewindow_without_nan, calc_random_indices
 from utils import parse_timestamp, is_valid_time
-
+from plotting.plot_crops import plot_data_for_timestamp, video_quicklook
 
 
 def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
@@ -80,14 +82,14 @@ def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
 
     # check for all NaN values or values outside the specified range
     # select all data vars except RR_de and RR_it for the check of all NaN values
-    vars = [var for var in ds_timeseries.data_vars if var not in ['RR_de', 'RR_it']]
+    vars = [var for var in ds_time.data_vars if var not in ['RR_de', 'RR_it']]
     value_min = [vmin for i, vmin in enumerate(VALUE_MIN) if CLOUD_PRM[i] in vars]
     value_max = [vmax for i, vmax in enumerate(VALUE_MAX) if CLOUD_PRM[i] in vars]
 
     # check for all NaN values or values outside the specified range
-    is_all_nan_ds = all([xr.DataArray.isnull(ds_timeseries[var]).all() for var in vars])
+    is_all_nan_ds = all([xr.DataArray.isnull(ds_time[var]).all() for var in vars])
     is_outside_range = any(
-        [((ds_timeseries[var] < vmin) | (ds_timeseries[var] > vmax)).any()
+        [((ds_time[var] < vmin) | (ds_time[var] > vmax)).any()
          for var, vmin, vmax in zip(vars, value_min, value_max)]
     )
     if is_all_nan_ds or is_outside_range:
@@ -108,7 +110,7 @@ def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
     logging.info(f"Generating crops for timestamp: {timestamp}, saving as: {filename_to_save}")
     # generate crops based on the cropping strategy
     if CROPPING_STRATEGY == 'random':
-        crops_nc_random(ds_timeseries, X_PIXEL, Y_PIXEL,filename_to_save, outpath, timestamp, domain)
+        crops_nc_random(ds_time, X_PIXEL, Y_PIXEL, filename_to_save, outpath, timestamp, domain)
     elif CROPPING_STRATEGY == 'fixed':
         crops_nc_fixed(ds_time, X_PIXEL, Y_PIXEL, [(CROP_UL_LAT, CROP_UL_LON)], filename_to_save, outpath, 'npy')
     else:
@@ -183,7 +185,7 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
         if file_obj is None:
 
             # write date to log file for info
-            with open('log_skipped_dates.txt', 'a') as log_file:
+            with open('log_skipped_dates_joint_dataset.txt', 'a') as log_file:
                 log_file.write(f"{yyyy}-{mm}-{dd} - missing {var_name} file \n")
             # return to main and skip the day
             return None, None
@@ -355,13 +357,11 @@ def main():
         # loop over months 
         for month in MONTHS:
 
-            # initialization of variable to handle space-time crops between days
-            if TIME_LENGTH > 1:
-                # initialize variable indicating the presence of an incomplete timeserie in the previous day to none
-                from_previous_day = None
-
             # loop over days
             for day in DAYS:
+
+                # initialize flag for missing files for the day
+                count_missing_timeseries = 0
 
                 # read variables to read and access all files with their corresponding paths built with a function
                 bucket_names, file_names = read_bucket_name_path(year, month, day)
@@ -385,120 +385,153 @@ def main():
                     logging.info("Processing single timestamp crops.")
                     for timestamp in ds_crop.time.values:
                         try:
+                            # filter dataset for the specific timestamp
                             ds_time = filter_by_time(ds_crop, timestamp)
 
+                            if QUICKLOOKS_CROPS:
+
+                                # create output directory for quicklooks
+                                outpath_quicklooks = os.path.join(outpath, "quicklooks")
+                                os.makedirs(outpath_quicklooks, exist_ok=True)  
+
+                                # plot all original data for the selected timestamp for check on data selection
+                                plot_data_for_timestamp(ds_time, timestamp, outpath_quicklooks)
+                            
                             # crop individual timestamp and save them to ncdf and as images
                             crop_individual_timestamps(ds_time, timestamp, domain_all_data, outpath)
 
+
                         except Exception as e:
                             logging.warning(f"Skipping timestamp {timestamp} due to (sono qui): {e}")
+                
                             traceback.print_exc()
-
+                            pdb.set_trace()
 
                 # processing for space-time cropping - N_FRAMES time stamps
                 # ************************************************************
                 else:
+
                     logging.info(f"Processing space-time crops:{TIME_LENGTH} timestamps per sample.")
-
-                    # if there is data carried over from the previous day, process it first
-                    if from_previous_day is not None:
+                    logging.info(f"Expected to extract { int(len(ds_crop.time.values)/N_FRAMES) * N_RANDOM_TIMES *  N_SAMPLES} samples.")
+                    
+                    # loop on time dimension in base N_FRAMES:
+                    for ind_reference in range(0, len(ds_crop.time.values), N_FRAMES):
                         
-                        logging.info("Processing timeseries from previous day before starting with the current day.")
+                        """ selection strategy: for each loop, collect the time series initiating
+                         at ind_reference, and then N_RANDOM_TIMES-1 more initiating at a random start between
+                          ind_start and ind_start + N_FRAMES, to have a total of N_RANDOM_TIMES 
+                          samples collected for each time window of N_FRAMES, with different 
+                          random start times, to increase the variability of the samples and 
+                          avoid overfitting on specific start times. if there are not enough
+                          timestamps at the end of the day, we take the remaining ones from 
+                          the next day """
 
-                        # concatenate data from previous day to the beginning of the current day's dataset
-                        ds_timeseries = xr.concat([from_previous_day, ds_crop], dim='time').isel(time=slice(0, N_FRAMES))
+                        # calculate list of initial time stamps for this loop
+                        inds_random = calc_random_indices(ind_reference)
+                        print(f"Random indices for time series selection: {inds_random}, at ind_reference {ind_reference}")
 
-                        # check that selected timeserie is not nan for the MSG 10.8 channel 
-                        is_all_nan = ds_timeseries[CLOUD_PRM[0]].isnull().all(dim=['lat', 'lon'])
+                        for ind_start_time in inds_random:
 
-                        # process this timeseries if it is complete before moving on with the normal processing of the next day
-                        if not is_all_nan.any():
+                            # check if ind_start_time + N_FRAMES exceeds the length of the dataset,
+                            logging.info(f"Producing crops for {ind_start_time} to {ind_start_time + N_FRAMES}")
+                            logging.info("*******************************************************************************************")
+                            # if yes, take remaining timestamps from the next day
+                            if ind_start_time + N_FRAMES > len(ds_crop.time.values):
 
-                            # define start time index for the next time series when data exists from previous day
-                            start_next = calc_start_time_for_days_changing(from_previous_day)
+                                logging.info(f"Not enough timestamps remaining in the day starting from index {ind_start_time}, taking remaining ones from the next day.")
+                                ds_timeseries = ds_crop.isel(time=slice(ind_start_time, len(ds_crop.time.values)))
 
-                            # crop time series 
-                            timestamp_start = ds_timeseries.time.values[0] # first time stamp of the dataset selected by merging
-                            crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath)
+                                # read data from the next day
+                                next_day = datetime(year, month, day) + pd.Timedelta(days=1)
+                                yyyy_next, mm_next, dd_next = next_day.year, next_day.month, next_day.day
+                                ds_crop_next, domain_all_data_next = prepare_joint_dataset(s3, bucket_names, file_names, yyyy_next, mm_next, dd_next)
 
-                            # reset from_previous_day to None
-                            from_previous_day = None
-
-                            # updating start time for the next iteration
-                            start_time = start_next
-                        else:
-                            logging.info("Skipping timeseries from previous day due to all NaN values.")
-                            start_time = random.randint(0, int(N_FRAMES-1))
-
-                        logging.info(f"start_time for next iteration: {ds_timeseries.time[start_time].values}, {start_time} index")
-                        logging.info(f"**************************************************************************")
-                    # no data from previous day, set start time randomly
-                    else:
-
-                        exit_to_new_day = False
-                        # generate start_time index randomly based on MAX_TEMPORAL_OVERLAP and MAX_DAILY_OFFSET
-                        start_time = calc_start_time_for_days_full()
-
-                        logging.info(f"Initial start_time for the day: {ds_crop.time[start_time].values}")
-                        
-
-                        # loop over until the end of the day
-                        while start_time < len(ds_crop.time.values):
-                            
-                            # find timeseries window without NaN values and next start time
-                            ds_timeseries, start_next = search_timewindow_without_nan(ds_crop, start_time)
-
-                            # if timeseries is incomplete, break the loop
-                            if ds_timeseries is None:
-                                from_previous_day = None
-                                break
-                            
-                            # if timeseries in incomplete at the end of the day, store it for the next day
-                            elif len(ds_timeseries.time.values) < N_FRAMES:
-                                from_previous_day = ds_timeseries
-                                exit_to_new_day = True
-                                logging.info(f"Timeseries window is incomplete at the end of the day, storing it for the next day. Start time: {ds_timeseries.time[0].values}, number of frames: {len(ds_timeseries.time.values)}")
-                                logging.info("**************************************************************************")
-
-                                # go to next day
-                                break
+                                if ds_crop_next is not None:
+                                    # concatenate data from the next day to the current timeseries
+                                    ds_timeseries = xr.concat([ds_timeseries, ds_crop_next], dim='time').isel(time=slice(0, N_FRAMES))
+                                else:
+                                    logging.info(f"Next day {yyyy_next}-{mm_next:02d}-{dd_next:02d} data not found, skipping this time series.")
+                                    count_missing_timeseries += 1
+                                    # go to the next iteration of the loop to select another time series
+                                    continue
 
                             else:
-
-                                logging.info(f"Start time of the current timeseries window: {ds_timeseries.time[0].values}")
-                                logging.info(f"************++********************************************************************")
-                                logging.info(f"start index of time for the next iteration: {start_next} index")
-                                logging.info(f"************++********************************************************************")
-
-                                # crop time series starting from start_time
+                                # extracting timeserie 
+                                ds_timeseries = ds_crop.isel(time=slice(ind_start_time, ind_start_time + N_FRAMES))
                                 timestamp_start = ds_timeseries.time.values[0]
-                                crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath)   
+                                timestamp_end = ds_timeseries.time.values[-1]
+                                hh_st, mm_st, dd_st,  yy_st, min_st = parse_timestamp(timestamp_start)
+                                hh_end, mm_end, dd_end,  yy_end, min_end = parse_timestamp(timestamp_end)
+                                logging.info(f"Selected time series for day {dd_st}/{mm_st}/{yy_st} from {hh_st}:{min_st} to {hh_end}:{min_end} ")
+                                logging.info("******************************************************************************************")
+                            
+                            # plot quicklook of the selected time series for check on data selection
+                            if QUICKLOOKS_CROPS:
 
-                            # set start time for the next iteration of the loop to the start time of the next timeseries window
-                            start_time = start_next
-                            logging.info(f"index for start time of next iteration: {start_time} index")
-                            logging.info(f"**************************************************************************")
-                        
-                            if exit_to_new_day:
-                                break   
+                                outpath_quicklooks = os.path.join(outpath, "quicklooks")
+                                os.makedirs(outpath_quicklooks, exist_ok=True)  
 
-                    if exit_to_new_day:
-                        exit_to_new_day = False
-                        logging.info("Moving to the next day.")
-                        logging.info(f"**************************************************************************")
-                        continue
+                                # plot all original data for the selected timestamp for check on data selection
+                                for ind_time_series, time_value in enumerate(ds_timeseries.time.values):
+                                    plot_data_for_timestamp(ds_timeseries, time_value, outpath_quicklooks)
 
+                            # check if for some timestamps 10.8 IR channel is all nan
+                            is_all_nan = ds_timeseries[CLOUD_PRM[0]].isnull().all(dim=['lat', 'lon'])
+
+                            if is_all_nan.any():
+                                # write date and time to log file for info
+                                with open('log_skipped_timestamps.txt', 'a') as log_file:
+                                    log_file.write(f"{dd_st}/{mm_st}/{yy_st} {hh_st}:{min_st} - all NaN values in {CLOUD_PRM[0]} channel \n")
+                                    count_missing_timeseries += 1
+
+                                logging.info(f"Skipping time series starting at {timestamp_start} due to all NaN values in {CLOUD_PRM[0]} channel.")
+                                continue
+
+                            else: 
+
+                                # apply time series cropping and save crops to ncdf
+                                crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath)
+                
+                # end of loop over days
+                # make a list of all nc files produced for this day
+                nc_file_list = [f for f in os.listdir(outpath) if f.endswith('.nc') and f"{year}{month:02d}{day:02d}" in f]                
+                num_files_produced = len(nc_file_list)
+                expected_files = int(len(ds_crop.time.values)/N_FRAMES) * N_RANDOM_TIMES * N_SAMPLES
+
+                # number of files written in the log of missing files for the day
+                with open('log_files_produced.txt', 'a') as log_file:
+                    log_file.write(f"{year}-{month:02d}-{day:02d} - produced {num_files_produced} files, expected {expected_files} files based on the parameters set \n")
+                    log_file.write(f"{year}-{month:02d}-{day:02d} - missing {count_missing_timeseries} time series due to all NaN values in {CLOUD_PRM[0]} channel \n")
+
+                logging.info(f"Finished processing date: {year}-{month:02d}-{day:02d}. Produced {num_files_produced} files, expected {expected_files} files based on the parameters set. Missing {count_missing_timeseries} time series due to all NaN values in {CLOUD_PRM[0]} channel.")
+
+                # plot video quicklooks of the selected crops
+                if QUICKLOOKS_CROPS:
+
+                    outpath_quicklooks = os.path.join(outpath, "video_quicklooks")
+                    os.makedirs(outpath_quicklooks, exist_ok=True)  
+
+                    # plot all original data for the selected timestamp for check on data selection
+                    for file in nc_file_list:
+
+                        # read if the ncdf is from crop 0 or crop 1, to select the correct plotting function
+                        if "_0.nc" in file:
+                            crop_id = 0
+                        elif "_1.nc" in file:
+                            crop_id = 1
+
+                        print(f"Creating quicklook for file: {file} with crop_id: {crop_id}")
+                        # create quicklook video for the selected ncdf file and removes then gif and png 
+                        video_path = video_quicklook(os.path.join(outpath, file), outpath_quicklooks, crop_id) 
+
+
+                pdb.set_trace()
+            
         # print progress
         print("----------------------------------------------", flush=True)
         temp_runtime = time.time() - start_time_script
         print(f"{count_days} days processed: {temp_runtime/count_days:.2f} seconds or {temp_runtime/count_days/60:.2f} minutes per day", flush=True)
         print(f"total runtime until now: {temp_runtime/60:.2f} minutes or {temp_runtime/60/60:.2f} hours", flush=True)
-
-    # runnning time of the script in minutes
-    runtime = time.time() - start_time_script
-    print()
-    print(f"Total runtime: {runtime/60:.2f} minutes or {runtime/60/60:.2f} hours", flush=True)
-    print(f"Runtime per day: {runtime/count_days:.2f} seconds or {runtime/count_days/60:.2f} minutes", flush=True)
 
 
     # print and store config file in the output directory

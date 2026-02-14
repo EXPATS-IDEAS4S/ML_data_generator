@@ -5,7 +5,9 @@ date: 2024-06-20
 author: Claudia Acquistapace
 """
 
-
+from training.config import *
+import logging
+import os
 
 
 def is_valid_time(timestamp, month, day, hour):
