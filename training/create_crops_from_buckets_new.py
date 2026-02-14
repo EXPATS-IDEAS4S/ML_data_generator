@@ -38,7 +38,7 @@ from config import *
 from data_bucket_functions import init_s3, list_files_bucket, check_file_bucket, read_file, read_bucket_name_path
 
 from space_time_functions import calc_start_time_for_days_changing, calc_start_time_for_days_full, search_timewindow_without_nan, calc_random_indices
-from utils import parse_timestamp, is_valid_time
+from utils import parse_timestamp, is_valid_time, write_to_missing_timeseries_log
 from plotting.plot_crops import plot_data_for_timestamp, video_quicklook
 
 
@@ -245,7 +245,7 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
     return ds_crop, domain_all_data
 
 
-def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath):
+def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath, count_invalid):
     """
     Script to process space-time crops from the dataset and generate crops. 
 
@@ -257,6 +257,7 @@ def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath):
         timestamp_start: specific start timestamp being processed
         domain: domain for the input file
         outpath: output directory to save crops
+        count_invalid: counter for the number of invalid time series (all NaN or values outside range) encountered, to log the information
 
     returns:
         ncfilename: name of the nc file where the crop is saved
@@ -295,28 +296,14 @@ def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath):
     filename_to_save = f"{yyyy}{month}{day}_{hour}{minute}_{end_hour}{end_minute}_{var_string}"
     logging.info(f"filename to save: {filename_to_save}")
     logging.info(f"**************************************************************************")
-    # select all data vars except RR_de and RR_it for the check of all NaN values
-    vars = [var for var in ds_timeseries.data_vars if var not in ['RR_de', 'RR_it']]
-    value_min = [vmin for i, vmin in enumerate(VALUE_MIN) if CLOUD_PRM[i] in vars]
-    value_max = [vmax for i, vmax in enumerate(VALUE_MAX) if CLOUD_PRM[i] in vars]
-    
-    # check for all NaN values or values outside the specified range
-    is_all_nan_ds = all([xr.DataArray.isnull(ds_timeseries[var]).all() for var in vars])
-    is_outside_range = any(
-        [((ds_timeseries[var] < vmin) | (ds_timeseries[var] > vmax)).any()
-         for var, vmin, vmax in zip(vars, value_min, value_max)]
-    )
-
-    if is_all_nan_ds or is_outside_range:
-        logging.info(f"Skipping timestamp {timestamp_start} due to all NaN or values outside range.")
-        return
 
 
     # generate crops based on the cropping strategy
     if CROPPING_STRATEGY == 'random':
-        crops_nc_random(ds_timeseries, X_PIXEL, Y_PIXEL, filename_to_save, outpath, timestamp_start, domain)
+        count_invalid = crops_nc_random(ds_timeseries, X_PIXEL, Y_PIXEL, filename_to_save, outpath, timestamp_start, domain, count_invalid)
         logging.info(f"Finished generating random crops for timestamp: {timestamp_start}")
         logging.info("--------------------------------------------------------------------------------")
+        
     elif CROPPING_STRATEGY == 'fixed':
         crops_nc_fixed(ds_timeseries, X_PIXEL, Y_PIXEL, [(CROP_UL_LAT, CROP_UL_LON)], filename_to_save, outpath, 'npy')
         logging.info(f"Finished generating fixed crops for timestamp: {timestamp_start}")
@@ -324,7 +311,7 @@ def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath):
     else:
         raise ValueError(f"Invalid cropping strategy: {CROPPING_STRATEGY}")
 
-    return
+    return count_invalid
 
 
 def setup_logger():
@@ -357,10 +344,12 @@ def main():
         # loop over months 
         for month in MONTHS:
 
+
             # loop over days
             for day in DAYS:
 
-                # initialize flag for missing files for the day
+                # save list of indeces and day counteres that are selected
+                ind_selected = []
                 count_missing_timeseries = 0
 
                 # read variables to read and access all files with their corresponding paths built with a function
@@ -391,7 +380,7 @@ def main():
                             if QUICKLOOKS_CROPS:
 
                                 # create output directory for quicklooks
-                                outpath_quicklooks = os.path.join(outpath, "quicklooks")
+                                outpath_quicklooks = os.path.join(outpath, "quicklooks/original_data")
                                 os.makedirs(outpath_quicklooks, exist_ok=True)  
 
                                 # plot all original data for the selected timestamp for check on data selection
@@ -428,6 +417,14 @@ def main():
 
                         # calculate list of initial time stamps for this loop
                         inds_random = calc_random_indices(ind_reference)
+
+                        # adding indeces to the list 
+                        ind_selected.extend(inds_random)
+
+                        # write aa file where each line is for an iteration
+                        with open('log_index_timeserie.txt', 'a') as log_file:
+                            log_file.write(f"Reference index: {ind_reference}, Random indices: {inds_random} \n")
+                       
                         print(f"Random indices for time series selection: {inds_random}, at ind_reference {ind_reference}")
 
                         for ind_start_time in inds_random:
@@ -452,6 +449,8 @@ def main():
                                 else:
                                     logging.info(f"Next day {yyyy_next}-{mm_next:02d}-{dd_next:02d} data not found, skipping this time series.")
                                     count_missing_timeseries += 1
+                                    # add to file log_skipped_timeseries the exact start time of the missing time serie and the index
+                                    write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time)
                                     # go to the next iteration of the loop to select another time series
                                     continue
 
@@ -468,7 +467,7 @@ def main():
                             # plot quicklook of the selected time series for check on data selection
                             if QUICKLOOKS_CROPS:
 
-                                outpath_quicklooks = os.path.join(outpath, "quicklooks")
+                                outpath_quicklooks = os.path.join(outpath, "quicklooks/original_data")
                                 os.makedirs(outpath_quicklooks, exist_ok=True)  
 
                                 # plot all original data for the selected timestamp for check on data selection
@@ -479,31 +478,27 @@ def main():
                             is_all_nan = ds_timeseries[CLOUD_PRM[0]].isnull().all(dim=['lat', 'lon'])
 
                             if is_all_nan.any():
+                                
                                 # write date and time to log file for info
-                                with open('log_skipped_timestamps.txt', 'a') as log_file:
-                                    log_file.write(f"{dd_st}/{mm_st}/{yy_st} {hh_st}:{min_st} - all NaN values in {CLOUD_PRM[0]} channel \n")
-                                    count_missing_timeseries += 1
-
+                                write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time)
+                                count_missing_timeseries += 1
                                 logging.info(f"Skipping time series starting at {timestamp_start} due to all NaN values in {CLOUD_PRM[0]} channel.")
                                 continue
 
                             else: 
-
                                 # apply time series cropping and save crops to ncdf
-                                crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath)
-                
+                                count_miss_before = count_missing_timeseries
+                                count_missing_timeseries = crop_multiple_timestamps(ds_timeseries, timestamp_start, domain_all_data, outpath, count_missing_timeseries)
+                                # if count of missing time series increased, it means that the time series was skipped due to all NaN values in the channel,
+                                # so we add it to the log file with the exact start time of the time series and the index
+                                if count_missing_timeseries > count_miss_before:
+                                    write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time)
+
                 # end of loop over days
                 # make a list of all nc files produced for this day
                 nc_file_list = [f for f in os.listdir(outpath) if f.endswith('.nc') and f"{year}{month:02d}{day:02d}" in f]                
                 num_files_produced = len(nc_file_list)
                 expected_files = int(len(ds_crop.time.values)/N_FRAMES) * N_RANDOM_TIMES * N_SAMPLES
-
-                # number of files written in the log of missing files for the day
-                with open('log_files_produced.txt', 'a') as log_file:
-                    log_file.write(f"{year}-{month:02d}-{day:02d} - produced {num_files_produced} files, expected {expected_files} files based on the parameters set \n")
-                    log_file.write(f"{year}-{month:02d}-{day:02d} - missing {count_missing_timeseries} time series due to all NaN values in {CLOUD_PRM[0]} channel \n")
-
-                logging.info(f"Finished processing date: {year}-{month:02d}-{day:02d}. Produced {num_files_produced} files, expected {expected_files} files based on the parameters set. Missing {count_missing_timeseries} time series due to all NaN values in {CLOUD_PRM[0]} channel.")
 
                 # plot video quicklooks of the selected crops
                 if QUICKLOOKS_CROPS:
@@ -524,6 +519,15 @@ def main():
                         # create quicklook video for the selected ncdf file and removes then gif and png 
                         video_path = video_quicklook(os.path.join(outpath, file), outpath_quicklooks, crop_id) 
 
+                # number of files written in the log of missing files for the day
+                with open('log_files_produced.txt', 'a') as log_file:
+                    log_file.write(f"{year}-{month:02d}-{day:02d} - produced {num_files_produced} files \n")
+                    log_file.write(f"{year}-{month:02d}-{day:02d} - missing {count_missing_timeseries} time series due to all NaN values in {CLOUD_PRM[0]} channel \n")
+
+                print("******************************************************************************************")
+                print(f" number of starting time stamps {len(ind_selected)}")
+                print(f"number of expected files (twice the number of starting time stamps): {expected_files}")
+                print(f" invalid time series: {count_missing_timeseries} ")
 
                 pdb.set_trace()
             

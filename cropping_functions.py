@@ -76,7 +76,7 @@ def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_pat
 
 
 
-def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, domain, file_type = 'nc'):
+def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, domain, count_invalid, file_type = 'nc'):
     """
     Generates multiple random crops from the input dataset, saves them in NetCDF and TIFF formats.
 
@@ -98,9 +98,12 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
         The timestamp associated with the dataset.
     :param domain: tuple
         The domain for cropping (lon_min, lon_max, lat_min, lat_max).
+    :param count_invalid: int
+        The counter for invalid crops due to NaN values.
     :param file_type: str, optional (default='nc')
         The format in which the cropped images will be saved ('nc' for NetCDF, 'npy' for NumPy array).
-    :return: None
+    :return: int
+        The updated counter for invalid crops.
 
     global variables used and recalled from config.py:
     - N_SAMPLES: int, number of random crops to generate per timestamp
@@ -133,12 +136,26 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
         #crop the dataset besed on the random x and y (the upper left point of the crop)
         ds_crop = filter_by_domain(ds_image,[lonmin, lonmax, latmin, latmax])
 
-        #check if the crop contains any Nan
-        isnan_ds = xr.DataArray.isnull(xr.DataArray.sum(ds_crop,skipna=False))
-        #if not ds_crop.to_array().isnull().any().item():
+        # select all data vars except RR_de and RR_it for the check of all NaN values
+        vars = [var for var in ds_crop.data_vars if var not in ['RR_de', 'RR_it']]
+        is_all_nan_ds = all([xr.DataArray.isnull(ds_crop[var]).all() for var in vars])
 
-        if isnan_ds==False:
-            
+        # check for values outside the specified range
+        vars_all = [var for var in ds_crop.data_vars if var in CLOUD_PRM] # check all CLOUD_PRM
+        value_min = [vmin for i, vmin in enumerate(VALUE_MIN) if CLOUD_PRM[i] in vars_all]
+        value_max = [vmax for i, vmax in enumerate(VALUE_MAX) if CLOUD_PRM[i] in vars_all]
+        is_outside_range = any(
+            [((ds_crop[var] < vmin) | (ds_crop[var] > vmax)).any()
+            for var, vmin, vmax in zip(vars_all, value_min, value_max)]
+        )
+
+        if is_all_nan_ds or is_outside_range:
+            logging.info(f"Skipping timestamp {timestamp} spatial crop {i} due to all NaN or values outside range.")
+            count_invalid += 1
+            # go to next iteration of the loop without saving the crop
+            continue
+
+        else:
             # store ds crop in a list of crops for the space-time series
             ds_crop_timeseries.append(ds_crop)
 
@@ -178,10 +195,10 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
             logging.info(f"{out_path+'/'+filename+'_'+str(i)} saved")
             logging.info("--------------------------------------------------------------------------------")
 
-        #close the dataset to free resources
+        # after the loop is over, close the dataset to free resources
         ds_crop.close()
     
-    return
+    return count_invalid
 
 
 

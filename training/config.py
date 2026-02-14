@@ -33,7 +33,7 @@ CROP_UL_LAT = 50.0
 CROP_UL_LON = 6.5
 X_PIXEL, Y_PIXEL = 70, 70 # size of the crops in pixels
 OUTPUT_BASE = "/data1/crops" 
-QUICKLOOKS_CROPS = True # if true, quicklooks will be generated based on the parameters to set below 
+QUICKLOOKS_CROPS = False # if true, quicklooks will be generated based on the parameters to set below 
 ################################################################
 
 

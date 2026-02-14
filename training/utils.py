@@ -33,3 +33,23 @@ def parse_timestamp(timestamp):
     minute = str(timestamp).split('T')[1][3:5]
 
     return hour, month, day, yyyy, minute
+
+
+def write_to_missing_timeseries_log(ds_crop, timestamp, ind_start_time):
+    """
+    Writes the given timestamp and index to a log file for missing time series.
+    Input
+    - ds_crop: the dataset crop that is being processed
+    - timestamp: the timestamp that is being processed
+    - ind_start_time: the index of the timestamp in the dataset
+
+    Output
+    None, but writes to a log file named 'log_skipped_timeseries.txt' in
+    the current working directory.
+    """
+    with open('log_skipped_timeseries.txt', 'a') as log_file:
+        time_missing = timestamp
+        hour_miss, month_miss, day_miss, yyyy_miss, minute_miss = parse_timestamp(time_missing)
+        month_miss, day_miss, hour_miss = int(month_miss), int(day_miss), int(hour_miss)
+        log_file.write(f"date: {yyyy_miss}-{month_miss:02d}-{day_miss:02d} {hour_miss}:{minute_miss} for index {ind_start_time}\n")
+    return

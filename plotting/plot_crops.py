@@ -389,7 +389,6 @@ def plot_data_for_timestamp(ds_time, timestamp, out_path):
     """
     # define output filename based on timestamp, with format YYYYMMDD_HHMM_original_data.png
     # format time stamp as YYYYMMDD_HHMM
-    out_path = os.path.join(out_path, 'original_data')
     str_timestamp = str(timestamp)
     timestamp_string = str_timestamp.split('T')[0].split('-')[0] + str_timestamp.split('T')[0].split('-')[1] + str_timestamp.split('T')[0].split('-')[2] + '_' + str_timestamp.split('T')[1][0:2] + str_timestamp.split('T')[1][3:5]
     filename = f'{timestamp_string}_original_data.png'
