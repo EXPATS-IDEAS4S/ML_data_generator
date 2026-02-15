@@ -11,9 +11,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 N_FRAMES = 8 # number of frames in time for space-time crops
 # if N_FRAMES = 1 discard to set other space time parameters
 N_RANDOM_TIMES = 3 # number of random start times to collect for each iteration of ind_start_time in range(0, len(ds_crop.time.values), N_FRAMES)
-MAX_TEMPORAL_OVERLAP = 0.25 # maximum temporal overlap between crops from the same time series (0.25 = 25%)
-MAX_DAILY_OFFSET = None  # one can set a random offset at the beginning of the day to introduce a randomness in the timeseries starting times
-MAX_CROPPING_ATTEMPTS = 10 
+#MAX_TEMPORAL_OVERLAP = 0.25 # maximum temporal overlap between crops from the same time series (0.25 = 25%)
+#MAX_DAILY_OFFSET = None  # one can set a random offset at the beginning of the day to introduce a randomness in the timeseries starting times
+#MAX_CROPPING_ATTEMPTS = 10 
 ################################################################
 
 
@@ -41,7 +41,7 @@ QUICKLOOKS_CROPS = False # if true, quicklooks will be generated based on the pa
 ################################################################
 DOMAIN = (5, 16, 42, 51.5)
 DOMAIN_NAME = 'EXPATS'
-YEARS = [2013, 2014]
+YEARS = [2019, 2020]
 MONTHS = [4, 5, 6, 7, 8, 9]
 DAYS = range(1, 32)
 MONTH_START, MONTH_END = '04', '09'
@@ -74,6 +74,8 @@ PATH_DIR = ["/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN",
 BASENAME = ["merged_MSG_CMSAF", "merged_MSG_CMSAF","_RR_DE_15min_msg_res"] # name string for the output files of the crops
 BUCKET_NAMES = ["expats-msg-training", "expats-msg-training", "expats-radar-germany"] # S3 bucket names for each variable   
 VALUE_CLOUD_MASK_REPLACE = [320.0, 0.0, 0.0] # value to insert in the cloud-free areas after applying CMA mask, if APPLY_CMA is True / discarded, CM is provided as input channel
+VALUE_CHECK_MIN = [180., 0, 0.0]  # min value for quality check of the variable 
+VALUE_CHECK_MAX = [310., 1, 50.0] # max value for quality check of the variable chat
 VALUE_MIN = [240., 0, 0.0]  # min value for each variable to consider as cloud-free when applying CMA mask
 VALUE_MAX = [290., 1, 20.0] # max value for each variable to consider as cloud-free when applying CMA mask
 UNITS = ['K', '', 'mm'] # units for each variable, used for plotting
