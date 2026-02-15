@@ -2,7 +2,7 @@
 #.sat_enviroment
 
 # log files
-log*.txt
+log_*.txt
 
 
 # Byte-compiled / optimized / DLL files
