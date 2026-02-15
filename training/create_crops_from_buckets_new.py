@@ -9,7 +9,22 @@ to run on EWC. remember to activate the virtual environment first:
 source  /home/claudia/.venv/bin/activate
 and then call the script:
 
+log files produced in the log_files folder in the output directory, with a subfolder for each run based on the config parameters, 
+with indication of the parameters in the name of the folder, to keep track of the different runs and their settings. 
+The log files are:
 
+    -   log_skipped_dates_joint_dataset.txt ( in prepare_joint_dataset function )
+            logs the days for which one or more of the input files were missing, with indication of which variable was missing
+    -   log_skipped_timeseries.txt ( in crop_multiple_timestamps function and in main)
+            logs the start time and index of the time series that were skipped due to all NaN values in the channel, 
+            to have a record of which time series were not included in the dataset and
+    -   log_index_timeserie.txt ( in main function )
+            logs the reference index and the random indices selected for each time series selection, 
+            to have a record of which time series were selected for cropping
+    -   log_files_produced  ( in main function )
+            logs the number of files produced for each day, and the number of missing time series due 
+            to all NaN values in the channel, to have a record of the output dataset and the number
+            of missing time series for each day.
 """
 
 import os
@@ -38,7 +53,7 @@ from config import *
 from data_bucket_functions import init_s3, list_files_bucket, check_file_bucket, read_file, read_bucket_name_path
 
 from space_time_functions import calc_start_time_for_days_changing, calc_start_time_for_days_full, search_timewindow_without_nan, calc_random_indices
-from utils import parse_timestamp, is_valid_time, write_to_missing_timeseries_log
+from utils import parse_timestamp, is_valid_time, write_to_missing_timeseries_log, search_all_nans_or_outside_range
 from plotting.plot_crops import plot_data_for_timestamp, video_quicklook
 
 
@@ -79,19 +94,10 @@ def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
     # define timestamps for defition of output filename
     hour, month, day, yyyy, minute = parse_timestamp(timestamp)
     print(hour, month, day, minute, yyyy)
+     
+    # search for all nans in vars except RR and for values outside the specified range in all variables of CLOUD_PRM
+    is_all_nan_ds, is_outside_range = search_all_nans_or_outside_range(ds_crop)
 
-    # check for all NaN values or values outside the specified range
-    # select all data vars except RR_de and RR_it for the check of all NaN values
-    vars = [var for var in ds_time.data_vars if var not in ['RR_de', 'RR_it']]
-    value_min = [vmin for i, vmin in enumerate(VALUE_MIN) if CLOUD_PRM[i] in vars]
-    value_max = [vmax for i, vmax in enumerate(VALUE_MAX) if CLOUD_PRM[i] in vars]
-
-    # check for all NaN values or values outside the specified range
-    is_all_nan_ds = all([xr.DataArray.isnull(ds_time[var]).all() for var in vars])
-    is_outside_range = any(
-        [((ds_time[var] < vmin) | (ds_time[var] > vmax)).any()
-         for var, vmin, vmax in zip(vars, value_min, value_max)]
-    )
     if is_all_nan_ds or is_outside_range:
         logging.info(f"Skipping timestamp {timestamp} due to all NaN or values outside range.")
         return
@@ -119,7 +125,7 @@ def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
     return
 
 
-def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
+def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd, today_str, log_path):
     """
     Prepares a joint xarray Dataset by reading and merging data from multiple S3 buckets. it reads and 
     then merges the datasets for all variables specified in CLOUD_PRM. It identifies the common domain across all datasets
@@ -133,6 +139,8 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
         yyyy: year of the data
         mm: month of the data
         dd: day of the data
+        today_str: string representing today's date in the format yyyymmdd, used for logging purposes
+        log_path: path to the log directory where logs will be saved
     output:
         Merged xarray Dataset containing data from all specified buckets and files.
         domain where all data are available: tuple with (lon_min, lon_max, lat_min, lat_max)
@@ -185,7 +193,7 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd):
         if file_obj is None:
 
             # write date to log file for info
-            with open('log_skipped_dates_joint_dataset.txt', 'a') as log_file:
+            with open(os.path.join(log_path, f'{today_str}_log_skipped_dates_joint_dataset.txt'), 'a') as log_file:
                 log_file.write(f"{yyyy}-{mm}-{dd} - missing {var_name} file \n")
             # return to main and skip the day
             return None, None
@@ -283,6 +291,8 @@ def crop_multiple_timestamps(ds_timeseries, timestamp_start, domain, outpath, co
         Saves crops to the specified output directory:
         - ncdf in nc folder
         - images in images folder
+
+    
     """
     # build filename string as yyyymmmdd_starthourminute_endhourminute_VARIABLES
     end_time = ds_timeseries.time.values[-1]
@@ -325,6 +335,9 @@ def main():
     # get start time of this script
     start_time_script = time.time()
 
+    # prepare today string of the form yyyymmdd for the file name where today is the day in which the code is run
+    today_str = datetime.now().strftime("%Y%m%d")
+
     # start logger and initialize s3 client
     setup_logger()
     s3 = init_s3()
@@ -334,6 +347,22 @@ def main():
     years_str = "-".join(map(str, YEARS))
     outpath = os.path.join(OUTPUT_BASE, f"crops_{cloud_prm_str}_{X_PIXEL}x{Y_PIXEL}_{years_str}_{N_SAMPLES}-{CROPPING_STRATEGY}-nframes-{TIME_LENGTH}")
     os.makedirs(outpath, exist_ok=True)
+
+    # create string to identify current run based on config parameters to created a log folder for this run
+    # string format: run_2013-2014_4-5-6-7-8-9_Nframes8_Nrandtime3_Nrandspace2
+    string_folder = f"run_{years_str}_{'-'.join(map(str, MONTHS))}_Nframes{N_FRAMES}_Nrandtime{N_RANDOM_TIMES}_Nrandspace{N_SAMPLES}"
+    log_path = os.path.join(outpath, "log_files/", f"{string_folder}/")
+    os.makedirs(log_path, exist_ok=True)
+    
+    # if the folder already exists, ask the user if they want 
+    # to do again the run and overwrite the existing log files
+    if os.listdir(log_path):
+        answer = input(f"Log folder {log_path} already exists. Do you want to do the run again and overwrite the existing log files? (y/n) ")
+        if answer.lower() != 'y':
+            print("Exiting the code.")
+            return
+        else:
+            print("Proceeding with the run and overwriting existing log files.")
 
     # count days to estimate time taken to run the script per day
     count_days = 0
@@ -356,7 +385,7 @@ def main():
                 bucket_names, file_names = read_bucket_name_path(year, month, day)
 
                 # read, crop, resample and merge all variables of interest into a single dataset for the day
-                ds_crop, domain_all_data = prepare_joint_dataset(s3, bucket_names, file_names, year, month, day)
+                ds_crop, domain_all_data = prepare_joint_dataset(s3, bucket_names, file_names, year, month, day, today_str)
 
                 if ds_crop is None:
                     logging.info(f"Skipping {year}-{month:02d}-{day:02d} due to missing files.")
@@ -422,7 +451,7 @@ def main():
                         ind_selected.extend(inds_random)
 
                         # write aa file where each line is for an iteration
-                        with open('log_index_timeserie.txt', 'a') as log_file:
+                        with open(os.path.join(log_path, f'{today_str}_log_index_timeserie.txt'), 'a') as log_file:
                             log_file.write(f"Reference index: {ind_reference}, Random indices: {inds_random} \n")
                        
                         print(f"Random indices for time series selection: {inds_random}, at ind_reference {ind_reference}")
@@ -438,19 +467,30 @@ def main():
                                 logging.info(f"Not enough timestamps remaining in the day starting from index {ind_start_time}, taking remaining ones from the next day.")
                                 ds_timeseries = ds_crop.isel(time=slice(ind_start_time, len(ds_crop.time.values)))
 
+                                print("lenght of ds_timeseries with remaining timestamps from the day: ", len(ds_timeseries.time.values))
+
                                 # read data from the next day
                                 next_day = datetime(year, month, day) + pd.Timedelta(days=1)
                                 yyyy_next, mm_next, dd_next = next_day.year, next_day.month, next_day.day
-                                ds_crop_next, domain_all_data_next = prepare_joint_dataset(s3, bucket_names, file_names, yyyy_next, mm_next, dd_next)
+                                ds_crop_next, domain_all_data_next = prepare_joint_dataset(s3, bucket_names, file_names, yyyy_next, mm_next, dd_next, today_str, log_path)
 
                                 if ds_crop_next is not None:
                                     # concatenate data from the next day to the current timeseries
                                     ds_timeseries = xr.concat([ds_timeseries, ds_crop_next], dim='time').isel(time=slice(0, N_FRAMES))
+
+                                    print("lenght of ds_timeseries after concatenating with next day: ", len(ds_timeseries.time.values))
+                                    print("lenght of ds_timeseries at final stage: ", len(ds_timeseries.time.values))
+                                    if len(ds_timeseries.time.values) != N_FRAMES:
+                                        # abort the code execution 
+                                        raise ValueError(f"Error in concatenating data from the next day, expected length of timeseries: {N_FRAMES}, actual length: {len(ds_timeseries.time.values)}")
+                                    
+
                                 else:
                                     logging.info(f"Next day {yyyy_next}-{mm_next:02d}-{dd_next:02d} data not found, skipping this time series.")
                                     count_missing_timeseries += 1
+                                    crops_affected = 'both' # both because the time series is missing due to missing data and we cannot apply cropping
                                     # add to file log_skipped_timeseries the exact start time of the missing time serie and the index
-                                    write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time)
+                                    write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time, crops_affected, today_str, log_path)
                                     # go to the next iteration of the loop to select another time series
                                     continue
 
@@ -480,7 +520,8 @@ def main():
                             if is_all_nan.any():
                                 
                                 # write date and time to log file for info
-                                write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time)
+                                crops_affected = 'both' # both because the time series is missing due to all NaN values and we cannot apply cropping
+                                write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time, crops_affected, today_str, log_path)
                                 count_missing_timeseries += 1
                                 logging.info(f"Skipping time series starting at {timestamp_start} due to all NaN values in {CLOUD_PRM[0]} channel.")
                                 continue
@@ -492,7 +533,12 @@ def main():
                                 # if count of missing time series increased, it means that the time series was skipped due to all NaN values in the channel,
                                 # so we add it to the log file with the exact start time of the time series and the index
                                 if count_missing_timeseries > count_miss_before:
-                                    write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time)
+                                    # if the difference is 1, it means that only one time series was skipped, so we log it as 1 crop affected 
+                                    if count_missing_timeseries - count_miss_before == 1:
+                                        crops_affected = 'one'
+                                    elif count_missing_timeseries - count_miss_before > 1:
+                                        crops_affected = 'both' # both because more than one time series was skipped due to all NaN values and we cannot apply cropping
+                                    write_to_missing_timeseries_log(ds_crop, ds_crop.time.values[ind_start_time], ind_start_time, crops_affected, today_str, log_path)
 
                 # end of loop over days
                 # make a list of all nc files produced for this day
@@ -522,14 +568,14 @@ def main():
                 # number of files written in the log of missing files for the day
                 with open('log_files_produced.txt', 'a') as log_file:
                     log_file.write(f"{year}-{month:02d}-{day:02d} - produced {num_files_produced} files \n")
-                    log_file.write(f"{year}-{month:02d}-{day:02d} - missing {count_missing_timeseries} time series due to all NaN values in {CLOUD_PRM[0]} channel \n")
+                    log_file.write(f"{year}-{month:02d}-{day:02d} - missing {count_missing_timeseries} time series \n")
+                    log_file.write(f"{year}-{month:02d}-{day:02d} - expected files {expected_files} \n")    
 
                 print("******************************************************************************************")
                 print(f" number of starting time stamps {len(ind_selected)}")
                 print(f"number of expected files (twice the number of starting time stamps): {expected_files}")
                 print(f" invalid time series: {count_missing_timeseries} ")
 
-                pdb.set_trace()
             
         # print progress
         print("----------------------------------------------", flush=True)
@@ -540,7 +586,7 @@ def main():
 
     # print and store config file in the output directory
     config_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../training/config.py')
-    config_dst = os.path.join(os.path.dirname(outpath), 'config_used.py')
+    config_dst = os.path.join(os.path.dirname(log_path), f'{today_str}_config_used.py')
     os.system(f"cp {config_src} {config_dst}")
     logging.info(f"Copied config file to {config_dst}")
 
