@@ -13,6 +13,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from plotting.plot_crops import plot_crops_quicklooks_2fields, plot_single_crops_images
 from plotting.create_gif import create_gif_from_images
+from utils import search_all_nans_or_outside_range
 
 
 def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_path, file_type = 'nc'):
@@ -136,18 +137,8 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, filename, out_path, timestamp, d
         #crop the dataset besed on the random x and y (the upper left point of the crop)
         ds_crop = filter_by_domain(ds_image,[lonmin, lonmax, latmin, latmax])
 
-        # select all data vars except RR_de and RR_it for the check of all NaN values
-        vars = [var for var in ds_crop.data_vars if var not in ['RR_de', 'RR_it']]
-        is_all_nan_ds = all([xr.DataArray.isnull(ds_crop[var]).all() for var in vars])
-
-        # check for values outside the specified range
-        vars_all = [var for var in ds_crop.data_vars if var in CLOUD_PRM] # check all CLOUD_PRM
-        value_min = [vmin for i, vmin in enumerate(VALUE_MIN) if CLOUD_PRM[i] in vars_all]
-        value_max = [vmax for i, vmax in enumerate(VALUE_MAX) if CLOUD_PRM[i] in vars_all]
-        is_outside_range = any(
-            [((ds_crop[var] < vmin) | (ds_crop[var] > vmax)).any()
-            for var, vmin, vmax in zip(vars_all, value_min, value_max)]
-        )
+        # search for all nans in vars except RR and for values outside the specified range in all variables of CLOUD_PRM
+        is_all_nan_ds, is_outside_range = search_all_nans_or_outside_range(ds_crop)
 
         if is_all_nan_ds or is_outside_range:
             logging.info(f"Skipping timestamp {timestamp} spatial crop {i} due to all NaN or values outside range.")
