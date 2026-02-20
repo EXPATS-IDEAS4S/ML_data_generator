@@ -9,6 +9,7 @@ from training.config import *
 import logging
 import os
 import xarray as xr
+import numpy as np
 
 def is_valid_time(timestamp, month, day, hour):
     """
@@ -92,3 +93,28 @@ def search_all_nans_or_outside_range(ds_crop):
     return is_all_nan_ds, is_outside_range
 
 
+            
+            
+def resample_on_lat_lon_MTG(ds):
+    """
+    Load original latitude and longitude coordinate grid for a channel.
+
+    Parameters:
+        folder (Path): Base directory containing coordinate files.
+        channel (str): Data channel name.
+
+    Returns:
+        xarray.Dataset: Dataset containing latitude and longitude arrays.
+    """
+    coord_file = f"/home/claudia/auxiliary_data/20250507_MTG_fci_hrfi_lats_lons.nc"
+    ds_coords = xr.open_dataset(coord_file)
+    lat = ds_coords['lat_105'].values
+    lon = ds_coords['lon_105'].values
+
+    latlon_grid = np.meshgrid(lon, lat)
+    ds_coords['lon'] = (('y', 'x'), latlon_grid[0])
+    ds_coords['lat'] = (('y', 'x'), latlon_grid[1]) 
+
+    # resample ds on the lat-lon grid of MTG
+    ds_resampled = ds.interp(lat=ds_coords['lat'], lon=ds_coords['lon'], method='nearest')  
+    return ds_resampled

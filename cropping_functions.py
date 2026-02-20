@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 import PIL
 from scipy.ndimage import binary_closing
-from config import *
+from training.config import *
 import pdb
 import logging
 # instructiosn to import from parent directory

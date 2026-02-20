@@ -49,12 +49,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cropping_functions import crops_nc_random, crops_nc_fixed, filter_by_domain, filter_by_time, apply_cma_mask
 from credentials_buckets import S3_ACCESS_KEY, S3_SECRET_ACCESS_KEY, S3_ENDPOINT_URL
-from config import *
+from training.config import *
 from data_bucket_functions import init_s3, list_files_bucket, check_file_bucket, read_file, read_bucket_name_path
 
 from space_time_functions import calc_start_time_for_days_changing, calc_start_time_for_days_full, search_timewindow_without_nan, calc_random_indices
-from utils import parse_timestamp, is_valid_time, write_to_missing_timeseries_log, search_all_nans_or_outside_range
-from plotting.plot_crops import plot_data_for_timestamp, video_quicklook
+from utils import parse_timestamp, is_valid_time, write_to_missing_timeseries_log, search_all_nans_or_outside_range, resample_on_lat_lon_MTG
+from plotting.plot_crops import plot_data_for_timestamp, video_quicklook, plot_sat_map
 
 
 def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
@@ -205,6 +205,17 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd, today_str, 
             ds = xr.open_dataset(io.BytesIO(gzip.decompress(file_obj)))
         else:
             ds = xr.open_dataset(io.BytesIO(file_obj))
+        
+        # if only IR10.8 and cloud mask are the vars and RESAMPLING_MTG_RES is True, 
+        # resample IR10.8 and cloud mask to the resolution of MTG
+        if RESAMPLING_MTG_RES and var_name in ['IR_108', 'cma']:
+            print("dataset before resampling")
+            print(ds)
+            ds = resample_on_lat_lon_MTG(ds)
+            print("dataset after resampling")
+
+            pdb.set_trace()
+
 
         # select only variable of interest
         ds_var = ds[var_name]
@@ -231,6 +242,8 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd, today_str, 
     logging.info(f"Common domain for cropping: {domain_all_data}")
 
     # select only areas where data are in the domain for all ds_var in ds_arr
+    print(ds_arr)
+    print("Cropping datasets to the common domain...")
     for i, ds_var in enumerate(ds_arr):
         ds_arr[i] = ds_var.sel(lat=slice(lat_min_common, lat_max_common), lon=slice(lon_min_common, lon_max_common))
     
@@ -373,7 +386,6 @@ def main():
         # loop over months 
         for month in MONTHS:
 
-
             # loop over days
             for day in DAYS:
 
@@ -381,11 +393,15 @@ def main():
                 ind_selected = []
                 count_missing_timeseries = 0
 
+                # print CLOUD_PRM and the date being processed
+                logging.info(f"Processing date: {year}-{month:02d}-{day:02d} for variables {CLOUD_PRM}")
+                pdb.set_trace()
+
                 # read variables to read and access all files with their corresponding paths built with a function
                 bucket_names, file_names = read_bucket_name_path(year, month, day)
 
                 # read, crop, resample and merge all variables of interest into a single dataset for the day
-                ds_crop, domain_all_data = prepare_joint_dataset(s3, bucket_names, file_names, year, month, day, today_str)
+                ds_crop, domain_all_data = prepare_joint_dataset(s3, bucket_names, file_names, year, month, day, today_str, log_path)
 
                 if ds_crop is None:
                     logging.info(f"Skipping {year}-{month:02d}-{day:02d} due to missing files.")

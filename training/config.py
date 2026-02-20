@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 #  space-time parameters
 ################################################################
-N_FRAMES = 8 # number of frames in time for space-time crops
+N_FRAMES = 10 # number of frames in time for space-time crops
 # if N_FRAMES = 1 discard to set other space time parameters
 N_RANDOM_TIMES = 3 # number of random start times to collect for each iteration of ind_start_time in range(0, len(ds_crop.time.values), N_FRAMES)
 #MAX_TEMPORAL_OVERLAP = 0.25 # maximum temporal overlap between crops from the same time series (0.25 = 25%)
@@ -19,10 +19,10 @@ N_RANDOM_TIMES = 3 # number of random start times to collect for each iteration 
 
 # Configuration parameters for crop generation
 ################################################################
-N_BUCKETS = 2 # Number of buckets to use for reading input data
+N_BUCKETS = 1 # Number of buckets to use for reading input data
 APPLY_CMA = True # Set to True if you want to apply (corrected) CMA mask to IR_108 channel
 CROPPING_STRATEGY = 'random' # 'random' or 'fixed', ranodom mostly used for training, fixed for testing / discarded, CMA is provided as input channel
-N_SAMPLES = 2 # Number of random crops to generate per timestamp
+N_SAMPLES = 4 # Number of random crops to generate in space per timestamp
 if N_FRAMES > 1:
     TIME_LENGTH = N_FRAMES # for space-time crops
 else:
@@ -41,7 +41,8 @@ QUICKLOOKS_CROPS = False # if true, quicklooks will be generated based on the pa
 ################################################################
 DOMAIN = (5, 16, 42, 51.5)
 DOMAIN_NAME = 'EXPATS'
-YEARS = [2019, 2020]
+RESAMPLING_MTG_RES = True
+YEARS = [2025, 2006]
 MONTHS = [4, 5, 6, 7, 8, 9]
 DAYS = range(1, 32)
 MONTH_START, MONTH_END = '04', '09'
@@ -69,17 +70,30 @@ BUCKET_NAMES = ["expats-msg-training", "expats-msg-training", "expats-radar-germ
 VALUE_CLOUD_MASK_REPLACE = [320.0, 0.0, 0.0, 0.0] # value to insert in the cloud-free areas after applying CMA mask
 
 """
-CLOUD_PRM = ['IR_108', 'cma', 'RR_de'] # list of variable fields to use (sat channels, radar or other variables from different sources)
-PATH_DIR = ["/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", "/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", ""]
-BASENAME = ["merged_MSG_CMSAF", "merged_MSG_CMSAF","_RR_DE_15min_msg_res"] # name string for the output files of the crops
-BUCKET_NAMES = ["expats-msg-training", "expats-msg-training", "expats-radar-germany"] # S3 bucket names for each variable   
-VALUE_CLOUD_MASK_REPLACE = [320.0, 0.0, 0.0] # value to insert in the cloud-free areas after applying CMA mask, if APPLY_CMA is True / discarded, CM is provided as input channel
-VALUE_CHECK_MIN = [180., 0, 0.0]  # min value for quality check of the variable 
-VALUE_CHECK_MAX = [310., 1, 50.0] # max value for quality check of the variable chat
-VALUE_MIN = [240., 0, 0.0]  # min value for each variable to consider as cloud-free when applying CMA mask
-VALUE_MAX = [290., 1, 20.0] # max value for each variable to consider as cloud-free when applying CMA mask
-UNITS = ['K', '', 'mm'] # units for each variable, used for plotting
-TITLES = ['IR 10.8 Micron', 'Cloud mask', 'Accumulated rain'] # titles for each variable, used for plotting
+vars = ['IR_108', 'cma', 'RR_de'] # list of variable fields to use (sat channels, radar or other variables from different sources)
+paths = ["/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", "/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN", ""]
+basenames = ["merged_MSG_CMSAF", "merged_MSG_CMSAF","_RR_DE_15min_msg_res"] # name string for the output files of the crops
+bucketnames = ["expats-msg-training", "expats-msg-training", "expats-radar-germany"] # S3 bucket names for each variable   
+valuesCloudMaskReplace = [320.0, 0.0, 0.0] # value to insert in the cloud-free areas after applying CMA mask, if APPLY_CMA is True / discarded, CM is provided as input channel
+valueCheckMin = [180., 0, 0.0]  # min value for quality check of the variable 
+valueCheckMax = [310., 1, 50.0] # max value for quality check of the variable chat
+valueMin = [240., 0, 0.0]  # min value for each variable to consider as cloud-free when applying CMA mask
+valueMax = [290., 1, 20.0] # max value for each variable to consider as cloud-free when applying CMA mask
+units = ['K', '', 'mm'] # units for each variable, used for plotting
+titles = ['IR 10.8 Micron', 'Cloud mask', 'Accumulated rain'] # titles for each variable, used for plotting
+
+# selecting vars to plot based on N_BUCKETS, if N_BUCKETS < len(CLOUD_PRM), the lists below will be sliced to keep only the first N_BUCKETS elements, otherwise all variables are kept
+CLOUD_PRM = vars[:N_BUCKETS+1]
+PATH_DIR = paths[:N_BUCKETS+1]
+BASENAME = basenames[:N_BUCKETS+1]
+BUCKET_NAMES = bucketnames[:N_BUCKETS+1]
+VALUE_CLOUD_MASK_REPLACE = valuesCloudMaskReplace[:N_BUCKETS+1]
+VALUE_CHECK_MIN = valueCheckMin[:N_BUCKETS+1]
+VALUE_CHECK_MAX = valueCheckMax[:N_BUCKETS+1] 
+VALUE_MIN = valueMin[:N_BUCKETS+1]
+VALUE_MAX = valueMax[:N_BUCKETS+1]
+UNITS = units[:N_BUCKETS+1]
+TITLES = titles[:N_BUCKETS+1]
 ################################################################
 
 
