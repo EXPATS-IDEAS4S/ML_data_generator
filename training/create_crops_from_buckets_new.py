@@ -7,7 +7,9 @@ The crops are saved in NetCDF format and as images in the specified output direc
 For Claudia:
 to run on EWC. remember to activate the virtual environment first:
 source  /home/claudia/.venv/bin/activate
+
 and then call the script:
+python3 -m training.create_crops_from_buckets_new
 
 log files produced in the log_files folder in the output directory, with a subfolder for each run based on the config parameters, 
 with indication of the parameters in the name of the folder, to keep track of the different runs and their settings. 
@@ -208,14 +210,27 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd, today_str, 
         
         # if only IR10.8 and cloud mask are the vars and RESAMPLING_MTG_RES is True, 
         # resample IR10.8 and cloud mask to the resolution of MTG
-        if RESAMPLING_MTG_RES and var_name in ['IR_108', 'cma']:
-            print("dataset before resampling")
-            print(ds)
+        if RESAMPLING_MTG_RES and N_BUCKETS == 1:
+            #print("dataset before resampling")
+            #timestamp = ds.time.values[0] # get the timestamp for plotting, assuming all variables have the same timestamp
+            #ds_plot = ds.sel(time=timestamp) # select the data for the specific timestamp for plotting
+            # plot ds before resampling for check
+            #if var_name == 'IR_108':
+            #    plot_sat_map(ds_plot, 
+            #                timestamp, 
+            #                f"before_resampling", 
+            #                "/home/claudia/codes/ML_data_generator/")
+
             ds = resample_on_lat_lon_MTG(ds)
-            print("dataset after resampling")
+            #print("dataset after resampling")
 
-            pdb.set_trace()
-
+            # plot ds after resampling for check
+            #ds_plot = ds.sel(time=timestamp) # select the data for the specific timestamp for plotting  
+            #if var_name == 'IR_108':
+            #    plot_sat_map(ds_plot, 
+            #                timestamp, 
+            #                f"after_resampling", 
+            #                "/home/claudia/codes/ML_data_generator/")
 
         # select only variable of interest
         ds_var = ds[var_name]
@@ -232,6 +247,7 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd, today_str, 
         
         ds_arr.append(ds_var)
 
+
     # identify common domain across all datasets and crop them on that
     # define common domain
     lat_min_common = max(lats_min_list)
@@ -242,23 +258,28 @@ def prepare_joint_dataset(s3, bucket_names, file_names, yyyy,mm, dd, today_str, 
     logging.info(f"Common domain for cropping: {domain_all_data}")
 
     # select only areas where data are in the domain for all ds_var in ds_arr
-    print(ds_arr)
     print("Cropping datasets to the common domain...")
+    print("*********************************************************")
     for i, ds_var in enumerate(ds_arr):
         ds_arr[i] = ds_var.sel(lat=slice(lat_min_common, lat_max_common), lon=slice(lon_min_common, lon_max_common))
     
-    # resample all datasets to the ds with the highest resolution (smallest pixel size)
-    pixel_sizes = []
-    for ds_var in ds_arr:
-        lat_diff = np.abs(ds_var.lat[1] - ds_var.lat[0]).item()
-        lon_diff = np.abs(ds_var.lon[1] - ds_var.lon[0]).item()
-        pixel_size = (lat_diff + lon_diff) / 2
-        pixel_sizes.append(pixel_size)
-    highest_res_index = np.argmin(pixel_sizes)
-    ds_ref = ds_arr[highest_res_index]
-    for i, ds_var in enumerate(ds_arr):
-        if i != highest_res_index:
-            ds_arr[i] = ds_var.interp(lat=ds_ref.lat, lon=ds_ref.lon, method='nearest')
+    # resample to the data with highest res if more buckets are present
+    if N_BUCKETS > 1:
+        # resample all datasets to the ds with the highest resolution (smallest pixel size)
+        pixel_sizes = []
+        for ds_var in ds_arr:
+            lat_diff = np.abs(ds_var.lat[1] - ds_var.lat[0]).item()
+            lon_diff = np.abs(ds_var.lon[1] - ds_var.lon[0]).item()
+            pixel_size = (lat_diff + lon_diff) / 2
+            pixel_sizes.append(pixel_size)
+        highest_res_index = np.argmin(pixel_sizes)
+        ds_ref = ds_arr[highest_res_index]
+        for i, ds_var in enumerate(ds_arr):
+            if i != highest_res_index:
+                ds_arr[i] = ds_var.interp(lat=ds_ref.lat, lon=ds_ref.lon, method='nearest')
+    else:
+        # do nothing
+        pass
 
     # merge all datasets into a single dataset
     ds_crop = xr.merge(ds_arr)
@@ -395,7 +416,6 @@ def main():
 
                 # print CLOUD_PRM and the date being processed
                 logging.info(f"Processing date: {year}-{month:02d}-{day:02d} for variables {CLOUD_PRM}")
-                pdb.set_trace()
 
                 # read variables to read and access all files with their corresponding paths built with a function
                 bucket_names, file_names = read_bucket_name_path(year, month, day)

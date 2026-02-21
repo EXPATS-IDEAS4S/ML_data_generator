@@ -10,6 +10,8 @@ import logging
 import os
 import xarray as xr
 import numpy as np
+import pdb
+
 
 def is_valid_time(timestamp, month, day, hour):
     """
@@ -111,10 +113,43 @@ def resample_on_lat_lon_MTG(ds):
     lat = ds_coords['lat_105'].values
     lon = ds_coords['lon_105'].values
 
-    latlon_grid = np.meshgrid(lon, lat)
-    ds_coords['lon'] = (('y', 'x'), latlon_grid[0])
-    ds_coords['lat'] = (('y', 'x'), latlon_grid[1]) 
+     # Debug: print coordinate info
+    print("--- DEBUG: ds.lat ---")
+    print(getattr(ds, 'lat', 'No lat attribute'))
+    if 'lat' in ds.coords:
+        print("ds.lat min:", ds['lat'].values.min(), "max:", ds['lat'].values.max(), "dtype:", ds['lat'].values.dtype)
+    else:
+        print("ds has no 'lat' coordinate")
+    print("--- DEBUG: ds.lon ---")
+    print(getattr(ds, 'lon', 'No lon attribute'))
+    if 'lon' in ds.coords:
+        print("ds.lon min:", ds['lon'].values.min(), "max:", ds['lon'].values.max(), "dtype:", ds['lon'].values.dtype)
+    else:
+        print("ds has no 'lon' coordinate")
+    print("--- DEBUG: target lat ---")
+    print("lat min:", lat.min(), "max:", lat.max(), "dtype:", lat.dtype)
+    print("--- DEBUG: target lon ---")
+    print("lon min:", lon.min(), "max:", lon.max(), "dtype:", lon.dtype)
+
+    # Restrict interpolation to overlapping region
+    lat_min, lat_max = ds['lat'].values.min(), ds['lat'].values.max()
+    lon_min, lon_max = ds['lon'].values.min(), ds['lon'].values.max()
+    lat_overlap = lat[(lat >= lat_min) & (lat <= lat_max)]
+    lon_overlap = lon[(lon >= lon_min) & (lon <= lon_max)]
+    if lat_overlap.size == 0 or lon_overlap.size == 0:
+        print("WARNING: No overlap between source and target lat/lon. Interpolation will result in all NaNs.")
+    else:
+        print(f"Overlapping lat: {lat_overlap.min()} to {lat_overlap.max()} ({lat_overlap.size} values)")
+        print(f"Overlapping lon: {lon_overlap.min()} to {lon_overlap.max()} ({lon_overlap.size} values)")
+
+    ds_resampled = ds.interp(lat=lat_overlap, lon=lon_overlap, method='nearest')
+
+    # Debug: check IR_108 after interpolation
+    if 'IR_108' in ds_resampled:
+        arr = ds_resampled['IR_108'].values
+        print(f"IR_108 after interp: shape={arr.shape}, nan count={np.isnan(arr).sum()}, total={arr.size}")
+    else:
+        print("IR_108 not found in ds_resampled.")
 
     # resample ds on the lat-lon grid of MTG
-    ds_resampled = ds.interp(lat=ds_coords['lat'], lon=ds_coords['lon'], method='nearest')  
     return ds_resampled

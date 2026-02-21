@@ -527,7 +527,7 @@ def plot_sat_map(ds_time, timestamp, keyword, out_path):
         ax.add_feature(cfeature.COASTLINE)  
         ax.set_extent([DOMAIN[0], DOMAIN[1], DOMAIN[2], DOMAIN[3]], crs=ccrs.PlateCarree())
 
-        plt.savefig("/home/claudia/codes/ML_data_generator"+filename, dpi=300)
+        plt.savefig("/home/claudia/codes/ML_data_generator/"+filename, dpi=300)
         plt.close()
         
         return None
