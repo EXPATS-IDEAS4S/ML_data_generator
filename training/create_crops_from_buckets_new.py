@@ -11,6 +11,9 @@ source  /home/claudia/.venv/bin/activate
 and then call the script:
 python3 -m training.create_crops_from_buckets_new
 
+execute with nohup and redirect output to a log file:
+nohup python3 -m training.create_crops_from_buckets_new > /home/claudia/codes/ML_data_generator/logs_create_crops_from_buckets_new.txt 2>&1 &
+
 log files produced in the log_files folder in the output directory, with a subfolder for each run based on the config parameters, 
 with indication of the parameters in the name of the folder, to keep track of the different runs and their settings. 
 The log files are:
@@ -56,7 +59,7 @@ from data_bucket_functions import init_s3, list_files_bucket, check_file_bucket,
 
 from space_time_functions import calc_start_time_for_days_changing, calc_start_time_for_days_full, search_timewindow_without_nan, calc_random_indices
 from utils import parse_timestamp, is_valid_time, write_to_missing_timeseries_log, search_all_nans_or_outside_range, resample_on_lat_lon_MTG
-from plotting.plot_crops import plot_data_for_timestamp, video_quicklook, plot_sat_map
+from plotting.plot_crops import plot_data_for_timestamp, video_quicklook
 
 
 def crop_individual_timestamps(ds_time, timestamp, domain, outpath):
