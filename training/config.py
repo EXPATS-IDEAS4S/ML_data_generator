@@ -8,12 +8,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 #  space-time parameters
 ################################################################
-N_FRAMES = 12 # number of frames in time for space-time crops
+N_FRAMES = 16 # number of frames in time for space-time crops
 # if N_FRAMES = 1 discard to set other space time parameters
 N_RANDOM_TIMES = 4 # number of random start times to collect for each iteration of ind_start_time in range(0, len(ds_crop.time.values), N_FRAMES)
 #MAX_TEMPORAL_OVERLAP = 0.25 # maximum temporal overlap between crops from the same time series (0.25 = 25%)
 #MAX_DAILY_OFFSET = None  # one can set a random offset at the beginning of the day to introduce a randomness in the timeseries starting times
-#MAX_CROPPING_ATTEMPTS = 10 
+#MAX_CROPPING_ATTEMPTS =  10 
 ################################################################
 
 
@@ -32,7 +32,7 @@ TIME_RESOLUTION = '15min' # '15min', '1H', etc. time resolution of the input dat
 CROP_UL_LAT = 50.0
 CROP_UL_LON = 6.5
 X_PIXEL, Y_PIXEL = 100, 100 # size of the crops in pixels
-OUTPUT_BASE = "/data1/crops" 
+OUTPUT_BASE = "/sat_data/GRL_training_crops/" # base path for the output crops, if BUCKET_NAMES is set to None, otherwise the crops will be directly uploaded to the buckets indicated in BUCKET_NAMES
 QUICKLOOKS_CROPS = False # if true, quicklooks will be generated based on the parameters to set below 
 ################################################################
 
@@ -41,8 +41,8 @@ QUICKLOOKS_CROPS = False # if true, quicklooks will be generated based on the pa
 ################################################################
 DOMAIN = (5, 16, 42, 51.5)
 DOMAIN_NAME = 'EXPATS'
-RESAMPLING_MTG_RES = True # if true, in case of N_BUCKETS = 1, data is resampled to MTG resolution
-YEARS = [2025, 2006]
+RESAMPLING_MTG_RES = False # if true, in case of N_BUCKETS = 1, data is resampled to MTG resolution
+YEARS = [2011] # years to consider for the crop generation
 MONTHS = [4, 5, 6, 7, 8, 9]
 DAYS = range(1, 32)
 MONTH_START, MONTH_END = '04', '09'
