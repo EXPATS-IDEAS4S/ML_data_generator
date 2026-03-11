@@ -3,7 +3,7 @@
 
 # log files
 log_*.txt
-
+logs_*.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -18,3 +18,4 @@ other_codes/
 credentials_buckets.py
 buckets_names.py
 
+code_Triveni.py
