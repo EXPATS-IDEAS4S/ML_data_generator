@@ -344,7 +344,7 @@ def video_quicklook(crop_file, output_dir, crop_id):
     os.system(f'ffmpeg -i {video_path} -vcodec libx264 -pix_fmt yuv420p {video_path_mp4}')
     print(f'Video quicklook saved at: {video_path_mp4}')
 
-    # if present, re\move the gif file to save space
+    # if present, remove the gif file to save space
     if os.path.exists(video_path):
         os.remove(video_path)
 
@@ -389,6 +389,7 @@ def plot_data_for_timestamp(ds_time, timestamp, out_path):
     """
     # define output filename based on timestamp, with format YYYYMMDD_HHMM_original_data.png
     # format time stamp as YYYYMMDD_HHMM
+    out_path = os.path.join(out_path, 'original_data')
     str_timestamp = str(timestamp)
     timestamp_string = str_timestamp.split('T')[0].split('-')[0] + str_timestamp.split('T')[0].split('-')[1] + str_timestamp.split('T')[0].split('-')[2] + '_' + str_timestamp.split('T')[1][0:2] + str_timestamp.split('T')[1][3:5]
     filename = f'{timestamp_string}_original_data.png'
@@ -461,73 +462,4 @@ def plot_data_for_timestamp(ds_time, timestamp, out_path):
         plt.close()
         
         #print(f'Original data plot saved at: {os.path.join(out_path, filename)}')
-        return None
-
-
-
-
-def plot_sat_map(ds_time, timestamp, keyword, out_path):
-    """
-    Plots the original data for the given timestamp and saves the plot in the output directory.
-    This function is used to check the data selection for each timestamp.
-    :param ds_time: xarray.Dataset
-        The input dataset containing the original data for all timestamps.
-    :param timestamp: str
-        The timestamp associated with the dataset, used for naming the output files.
-    :param keyword: str
-        The keyword associated with the dataset, used for naming the output files.    
-    :param out_path: str
-        The output directory where the plot will be saved.
-    :param domain: tuple
-        The domain for the input file (lon_min, lon_max, lat_min, lat_max).
-    :return: None
-
-    The plot is a map of the IR_108 variable with borders and coastlines.
-
-    input:
-        - ds_time: xarray.Dataset containing the original data for the selected timestamp to plot
-        - timestamp: str, the timestamp associated with the dataset, used for naming the output files
-        - out_path: str, the output directory where the plot will be saved
-
-    dependencies:
-    - retrieve_plotting_params_from_config: function to retrieve plotting parameters for 
-    each variable from the config file, used to keep all plotting parameters in a single
-     place and avoid hardcoding them in the plotting functions
-
-    returns:
-    - None, the function saves the plot in the output directory and does not return anything
-    """
-    # define output filename based on timestamp, with format YYYYMMDD_HHMM_original_data.png
-    # format time stamp as YYYYMMDD_HHMM
-    str_timestamp = str(timestamp)
-    filename = f'sat_map_{keyword}.png'
-
-    # check if the plot already exists, if yes, skip the plotting
-    if os.path.exists("/home/claudia/codes/ML_data_generator"+filename):
-        print(f'Plot for timestamp {timestamp} already exists, skipping plotting.')
-        return None
-    else:
-        # set all font size of the plot to 20
-        plt.rcParams.update({'font.size': 20})
-
-        plotting_params = retrieve_plotting_params_from_config('IR_108')
-
-        fig, ax = plt.subplots(1, 1, figsize=(10, 10), subplot_kw={'projection': ccrs.PlateCarree()})
-        c = ax.pcolormesh(ds_time.lon, ds_time.lat, ds_time['IR_108'],
-                                        cmap=plotting_params['colormap'], 
-                                        vmin=plotting_params['vmin'], 
-                                        vmax=plotting_params['vmax'], 
-                                        transform=ccrs.PlateCarree())
-        cbar = plt.colorbar(c, ax=ax, orientation="horizontal", pad=0.02, shrink=0.8)
-        cbar.set_label(plotting_params['units'])
-        ax.set_title(plotting_params['title'])
-        ax.set_xlabel("Longitude")
-        ax.set_ylabel("Latitude")
-        ax.add_feature(cfeature.BORDERS, linestyle='-', linewidth=2, color="black")  
-        ax.add_feature(cfeature.COASTLINE)  
-        ax.set_extent([DOMAIN[0], DOMAIN[1], DOMAIN[2], DOMAIN[3]], crs=ccrs.PlateCarree())
-
-        plt.savefig("/home/claudia/codes/ML_data_generator/"+filename, dpi=300)
-        plt.close()
-        
         return None
