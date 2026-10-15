@@ -6,10 +6,11 @@ from scipy.ndimage import binary_closing
 import matplotlib as mpl
 
 # === CONFIGURATION ===
-MAIN_DIR = "/sat_data/crops/2006-2023_4-9_areathresh30_res15min_5frames_gap15min_cropsize75_min5pix_IR108-cm"
-INPUT_DIR = f"{MAIN_DIR}/nc/hail"
+MAIN_DIR = "/data1/crops/teamx_Apr-Sep_2025_icon_msg_new"
+INPUT_DIR = f"{MAIN_DIR}/nc/1/"
 VAR_NAME = "IR_108"  # Can be single (e.g., "IR_108") or combined (e.g., "WV_062-IR_108")
-OUTPUT_DIR = f"{MAIN_DIR}/img/{VAR_NAME}/hail"
+OUTPUT_DIR = f"{MAIN_DIR}/img/{VAR_NAME}"
+MAX_FILES = 1000  # Set to an integer to only convert the first N nc files.
 
 # ======================
 def create_WV_IR_diff_colormap(vmin, center, vmax, diverg_cmap=mpl.cm.seismic):
@@ -40,6 +41,20 @@ def save_image(data, out_path, cmap='viridis', vmin=None, vmax=None):
     plt.imsave(out_path, data, cmap=cmap, vmax=vmax, vmin=vmin)
     print(f"Saved: {out_path}")
 
+
+def _time_values(ds):
+    """Return time values as a 1D iterable even when the dataset stores a scalar timestamp."""
+    if "time" not in ds:
+        return []
+    return np.atleast_1d(ds.time.values)
+
+
+def _select_time_slice(data_array, timestamp):
+    """Select a time slice when the array is time-indexed, otherwise return the squeezed data."""
+    if "time" in data_array.dims:
+        return data_array.sel(time=timestamp).squeeze().values
+    return data_array.squeeze().values
+
 def is_combined_channel(var_name):
     return "-" in var_name
 
@@ -63,6 +78,8 @@ def combine_channels(ds, var_names, time_index, method='subtract'):
 def convert_nc_to_images(input_dir, output_dir, var_name="IR_108", cmap="plasma", vmin=None, vmax=None):
     os.makedirs(output_dir, exist_ok=True)
     nc_files = sorted([f for f in os.listdir(input_dir) if f.endswith(".nc")])
+    if MAX_FILES is not None:
+        nc_files = nc_files[:MAX_FILES]
     print(f"Found {len(nc_files)} .nc files in {input_dir}.")
 
     #is_combo = is_combined_channel(var_name)
@@ -74,9 +91,9 @@ def convert_nc_to_images(input_dir, output_dir, var_name="IR_108", cmap="plasma"
         print(f"Processing {nc_file}...")
         nc_path = os.path.join(input_dir, nc_file)
         try:
-            ds = xr.open_dataset(nc_path, engine='h5netcdf')
-            #print(ds)
-            print(ds.time.values)
+            ds = xr.open_dataset(nc_path)#, engine='h5netcdf')
+            time_values = _time_values(ds)
+            print(time_values)
 
 
             # Check all required variables exist
@@ -84,17 +101,17 @@ def convert_nc_to_images(input_dir, output_dir, var_name="IR_108", cmap="plasma"
                 print(f"Missing one or more required variables in {nc_file}. Skipping.")
                 continue
 
-            for i, t in enumerate(ds.time.values):
+            for i, t in enumerate(time_values):
                 print(f"Processing time step {i} for time {t}...")
 
                 # if is_combo:
                 #     img = combine_channels(ds, var_list, i, method='subtract')
                 # else:
-                img = ds[var_name].sel(time=t).squeeze().values
+                img = _select_time_slice(ds[var_name], t)
 
                 # Apply cloud mask if available
                 if 'cma' in ds and 'IR_108' in var_name:
-                    cma = ds['cma'].sel(time=t).squeeze().values
+                    cma = _select_time_slice(ds['cma'], t)
                     cma = binary_closing(cma, structure=np.ones((3, 3), dtype=bool))
                     img[cma == 0] = vmax
 
@@ -108,7 +125,7 @@ def convert_nc_to_images(input_dir, output_dir, var_name="IR_108", cmap="plasma"
 
 if __name__ == "__main__":
     cmap = "gray_r"
-    vmin = 180 #200
+    vmin = 240 #increased contrast (from 180 yo 240) to improve readability of figures
     vmax = 320 #260
     #vmin, center, vmax = -60, 0, 5
     #cmap = create_WV_IR_diff_colormap(vmin, center, vmax)
@@ -121,3 +138,4 @@ if __name__ == "__main__":
         vmax=vmax
     )
 
+#3036416

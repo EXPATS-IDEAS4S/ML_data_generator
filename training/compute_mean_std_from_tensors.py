@@ -32,12 +32,12 @@ import xarray as xr
 
 # ================= CONFIG =================
 file_extension = 'nc'  # 'nc' or 'npy'
-crop_path = f'/data1/crops/clips_ir108_100x100_8frames_2013-2020/{file_extension}/'
+crop_path = f'/data1/crops/ir108_100x100_2013-2017-2021-2025_2xrandomcrops_1xtimestamp_cma_nc/{file_extension}/'
 search_dir = os.path.join(crop_path, '1')  # Subfolder containing the files
 
 # Select channels by name (for .nc files)
 # If None → all variables are used
-selected_channel_names = ["IR_108_cm"]
+selected_channel_names = ["IR_108"]
 # ===========================================
 
 # ----------------- File Finder -----------------
@@ -48,7 +48,7 @@ print(f"Found {len(crop_files)} {file_extension} files.")
 
 # ----------------- File Loader -----------------
 def open_nc(file_path):
-    return xr.open_dataset(file_path)#, engine="h5netcdf")
+    return xr.open_dataset(file_path, engine="h5netcdf")
 
 def open_npy(file_path):
     return np.load(file_path)
@@ -57,6 +57,8 @@ def open_npy(file_path):
 sample_file = crop_files[0]
 if file_extension == 'nc':
     ds = open_nc(sample_file)
+    print(ds)
+    #exit()
     all_channel_names = list(ds.data_vars)
     print(f"Available channels: {all_channel_names}")
     
@@ -97,6 +99,7 @@ for file in crop_files:
     
     if file_extension == 'nc':
         ds = open_nc(file)
+        #print(ds)
         arr = ds[selected_channel_names].to_array().values
     else:
         arr = open_npy(file)
@@ -133,3 +136,5 @@ with open(mean_std_path, 'w') as f:
     f.write(' '.join([f"{std:.3f}" for std in channel_stds]) + '\n')
 
 print(f"✅ Mean and standard deviation saved to: {mean_std_path}")
+
+# 1090393

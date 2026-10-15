@@ -8,7 +8,7 @@ from scipy.ndimage import binary_closing
 import numpy as np
 import sys
 
-sys.path.append('/home/Daniele/codes/MSG-SEVIRI/data_generation/')
+sys.path.append('/home/Daniele/codes/ML_data_generator/')
 
 from cropping_functions import crops_nc_random, crops_nc_fixed, filter_by_domain, filter_by_time, apply_cma_mask
 from credentials_buckets import S3_BUCKET_NAME, S3_ACCESS_KEY, S3_SECRET_ACCESS_KEY, S3_ENDPOINT_URL
@@ -47,7 +47,7 @@ s3 = boto3.client(
 
 
 #Directory with the data to uplad
-years = [2013, 2014]
+years = [2013, 2017, 2021, 2025]
 months = range(4,10)
 days = range(1,32)
 path_dir = f"/data/sat/msg/ml_train_crops/IR_108-WV_062-CMA_FULL_EXPATS_DOMAIN"
@@ -56,7 +56,7 @@ basename = "merged_MSG_CMSAF"
 #Define crops setting
 
 cropping_strategy = 'random' #random or fixed
-n_samples = 1
+n_samples = 2
 
 # Define the cropping area for fixed crops (upper left corner latitude and longitude)
 crop_ul_lon = 6.5
@@ -68,18 +68,21 @@ month_end = '09' #Septeber
 hour_start = '00' #UTC (included)
 hour_end = '24' #UTC (not included,
 
+
+cloud_prm = ['IR_108']#, 'WV_062']#, 'cma']#,'IR_039'] #'cot', WV_062, IR_039
+
 # Define your range limits
 #TODO fix this in case more than one IR variable is included
-value_min = [180.0, 200]  # Example minimum value
-value_max = [320.0, 260]   # Example maximum value
+value_min = [180.0]#, 200]  # Example minimum value
+value_max = [320.0] #, 260]   # Example maximum value
 
 # Set this to True if 6.2-10.8 difference should be used 
-OT = True 
+OT = False
 
 if OT:
     value_fields = [value_max[0], -60] 
 else:
-    value_fields = [value_max[0], value_max[1]]
+    value_fields = [value_max[0]]#, value_max[1]]
  
 x_pixel = 100 
 y_pixel = 100 
@@ -87,14 +90,14 @@ y_pixel = 100
 domain = lonmin, lonmax, latmin, latmax = 5, 16, 42, 51.5 #DC domain from the paper
 domain_name = 'EXPATS'
 
-cloud_prm = ['IR_108', 'WV_062']#, 'cma']#,'IR_039'] #'cot', WV_062, IR_039
+
 
 apply_cma = True #if True, the cma variable will be included in the crops
 
 file_extension = 'nc'  # File extension for the dataset files
 
 #output_path =  f'/work/dcorradi/crops/{cloud_prm_str}_{years_str}_{x_pixel}x{y_pixel}_{domain_name}_{cropping_strategy}/'
-outpath = f'/data1/crops/dcv2_ir108_OT_100x100_35k_nc/{file_extension}/1'
+outpath = f'/data1/crops/ir108_100x100_2013-2017-2021-2025_2xrandomcrops_1xtimestamp_cma_nc/{file_extension}/1'
 os.makedirs(outpath, exist_ok=True)
 
 for year in years:
@@ -106,7 +109,7 @@ for year in years:
             #Read file from the bucket
             my_obj = read_file(s3, file, S3_BUCKET_NAME)
             if my_obj is not None:
-                ds_day = xr.open_dataset(io.BytesIO(my_obj))
+                ds_day = xr.open_dataset(io.BytesIO(my_obj), engine='h5netcdf')
                 #print(ds_day)
                 
                 #select only variable of interest
@@ -186,4 +189,4 @@ for year in years:
                             raise ValueError(f"Invalid cropping strategy: '{cropping_strategy}'")
          
 
-#nohup 3744118
+#nohup 1036028

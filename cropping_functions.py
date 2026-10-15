@@ -5,6 +5,14 @@ import matplotlib.pyplot as plt
 import os
 import PIL
 from scipy.ndimage import binary_closing
+import random
+
+
+def _crop_has_nan_values(ds_crop):
+    """Return True when the crop contains any NaN values."""
+    if hasattr(ds_crop, "to_array"):
+        return ds_crop.to_array().isnull().any().item()
+    return np.isnan(ds_crop).any()
 
 
 def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_path, file_type = 'nc'):
@@ -45,30 +53,26 @@ def crops_nc_fixed(ds_image, x_pixel, y_pixel, crop_positions, filename, out_pat
         # Crop the dataset
         ds_crop = filter_by_domain(ds_image, [lonmin, lonmax, latmin, latmax])
 
-        #check if the crop contains any Nan
-        isnan_ds = xr.DataArray.isnull(xr.DataArray.sum(ds_crop,skipna=False))
+        if _crop_has_nan_values(ds_crop):
+            ds_crop.close()
+            continue
 
-        if isnan_ds==False:
-            # Save the crop as NetCDF
-            if file_type == 'nc':
-                nc_path = f"{out_path}/nc/{filename}_{i}.nc"
-                ds_crop.to_netcdf(nc_path, engine="h5netcdf")
-                print(f"{nc_path} saved")
-            elif file_type == 'npy':
-                npy_path = f"{out_path}/{filename}_{i}.npy"
-                #print(ds_crop)
-                #print(ds_crop.to_array()[0,:,:,:].values)	
-                array_to_save = ds_crop.to_array()[0,:,:,:].values  
-                #save if do not cantain any Nan
-                if not np.isnan(array_to_save).any(): 
-                    np.save(npy_path, array_to_save)
-                    print(f"{npy_path} saved")
-            else:
-                raise ValueError(f"Invalid file type: '{file_type}'")
+        # Save the crop only after confirming it is NaN-free.
+        if file_type == 'nc':
+            nc_path = f"{out_path}/nc/{filename}_{i}.nc"
+            ds_crop.to_netcdf(nc_path, engine="h5netcdf")
+            print(f"{nc_path} saved")
+        elif file_type == 'npy':
+            npy_path = f"{out_path}/{filename}_{i}.npy"
+            array_to_save = ds_crop.to_array()[0,:,:,:].values
+            np.save(npy_path, array_to_save)
+            print(f"{npy_path} saved")
+        else:
+            raise ValueError(f"Invalid file type: '{file_type}'")
 
 
 
-def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, file_type = 'nc'):
+def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, random_seed=None, file_type = 'nc'):
     """
     Generates multiple random crops from the input dataset, saves them in NetCDF and TIFF formats.
 
@@ -97,6 +101,9 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, fi
     y = len(ds_image.lat.values)
     #print(x,y)
        
+    if random_seed is not None:
+        random.seed(random_seed)
+
     for i in range(n_sample):
 
         x1 = randrange(0, x - x_pixel)
@@ -113,32 +120,29 @@ def crops_nc_random(ds_image, x_pixel, y_pixel, n_sample, filename, out_path, fi
         #crop the dataset besed on the random x and y (the upper left point of the crop)
         ds_crop = filter_by_domain(ds_image,[lonmin, lonmax, latmin, latmax])
 
-        #check if the crop contains any Nan
-        isnan_ds = xr.DataArray.isnull(xr.DataArray.sum(ds_crop,skipna=False))
-        #if not ds_crop.to_array().isnull().any().item():
+        if _crop_has_nan_values(ds_crop):
+            ds_crop.close()
+            continue
 
-        if isnan_ds==False:
-            #save the crops in nc format to keep actual values and lat/lon coordinates
-            filepath = out_path+'/'+filename+"_"+str(i)+'.'+file_type
-            #print(filepath)
+        # Save the crop only after confirming it is NaN-free.
+        filepath = out_path+'/'+filename+"_"+str(i)+'.'+file_type
 
-            if file_type == 'nc':
-                encoding = {
-                                var: {
-                                    'zlib': True,
-                                    'complevel': 9,
-                                    'dtype': ds_crop[var].dtype.name  # preserve original dtype (e.g., 'float32', 'int16')
-                                } for var in ds_crop.data_vars
-                            }
-                ds_crop.to_netcdf(filepath, encoding=encoding, engine="h5netcdf")
-            elif file_type == 'npy':
-                #print(ds_crop.to_array().values.shape)
-                array_to_save = ds_crop.to_array()[0,:,:].values
-                np.save(filepath, array_to_save)
-            else:
-                raise ValueError(f"Invalid file type: '{file_type}'")
+        if file_type == 'nc':
+            encoding = {
+                            var: {
+                                'zlib': True,
+                                'complevel': 9,
+                                'dtype': ds_crop[var].dtype.name  # preserve original dtype (e.g., 'float32', 'int16')
+                            } for var in ds_crop.data_vars
+                        }
+            ds_crop.to_netcdf(filepath, encoding=encoding, engine="h5netcdf")
+        elif file_type == 'npy':
+            array_to_save = ds_crop.to_array()[0,:,:].values
+            np.save(filepath, array_to_save)
+        else:
+            raise ValueError(f"Invalid file type: '{file_type}'")
 
-            print(out_path+'/'+filename+"_"+str(i), 'saved')
+        print(out_path+'/'+filename+"_"+str(i), 'saved')
 
         #close the dataset to free resources
         ds_crop.close()
@@ -410,37 +414,54 @@ def convert_crops_to_images_1band(ds_image, x_pixel, y_pixel, filename, format, 
     print(f'{crop_filepath} is saved')
 
 
-def apply_cma_mask(ds_day, ds_day_var, value_max, only_108=True):
+def apply_cma_mask(
+    ds_day,
+    ds_day_var,
+    value_max,
+    only_108=True,
+    apply_closing=True,
+    closing_structure=None,
+):
     """
-    Applies binary closing to each time slice of the 'cma' field in ds_day,
-    and updates 'ir_108' in ds_day_var accordingly at each timestamp.
+    Applies the CMA mask to each time slice and updates 'IR_108' in ds_day_var.
+    Morphological closing can be enabled and configured with a structuring element.
 
     Parameters:
     - ds_day: xarray Dataset with dimensions (T, lat, lon) containing 'cma'.
     - ds_day_var: xarray Dataset with the same time dimension, containing 'ir_108'.
-    - cloud_prm: list of strings indicating which cloud parameters are present.
-    - value_max: list of value to assign where closed CMA mask is 0.
+    - value_max: scalar or sequence of values to assign where closed CMA mask is 0.
+    - only_108: when True, apply the mask only to 'IR_108'.
+    - apply_closing: apply morphological closing to the CMA mask when True.
+    - closing_structure: structuring element passed to binary_closing.
 
     Returns:
     - Updated ds_day_var with masked 'ir_108' for each time step.
     """
     
-    structure = np.ones((3, 3), dtype=np.uint8)
+    if closing_structure is None:
+        closing_structure = np.ones((3, 3), dtype=np.uint8)
+    else:
+        closing_structure = np.asarray(closing_structure, dtype=np.uint8)
 
     for t in ds_day['time']:
         cma_slice = ds_day['cma'].sel(time=t).values
-        closed_cma = binary_closing(cma_slice, structure=structure)
+        cma_mask = (
+            binary_closing(cma_slice, structure=closing_structure)
+            if apply_closing
+            else cma_slice
+        )
 
         if only_108:
             # Only apply mask to 'IR_108'
             ir_108_slice = ds_day_var['IR_108'].sel(time=t)
-            masked_ir_108 = ir_108_slice.where(closed_cma == 1, value_max[0])
+            fill_value = value_max[0] if isinstance(value_max, (list, tuple, np.ndarray)) else value_max
+            masked_ir_108 = ir_108_slice.where(cma_mask == 1, fill_value)
             ds_day_var['IR_108'].loc[dict(time=t)] = masked_ir_108
         else:
             # Apply mask to all variables in ds_day_var, apply for each variable the corresponding value_max
             for var, val_mask in zip(ds_day_var.data_vars, value_max):
                 var_slice = ds_day_var[var].sel(time=t)
-                masked_var = var_slice.where(closed_cma == 1, val_mask)
+                masked_var = var_slice.where(cma_mask == 1, val_mask)
                 ds_day_var[var].loc[dict(time=t)] = masked_var
         
     return ds_day_var
